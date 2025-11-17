@@ -14,6 +14,7 @@ from tqdm import tqdm # For nice progress bars
 # Set paths relative to 'notebooks/' directory
 PROCESSED_DIR = Path("../data/processed")
 MODELS_DIR = Path("../models")
+RESULTS_DIR = Path("../results")
 SRC_DIR = Path("../src")
 
 # Add 'src' to system path to import our Dataset
@@ -26,6 +27,7 @@ except ImportError:
 
 # Ensure models directory exists
 MODELS_DIR.mkdir(parents=True, exist_ok=True)
+RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 # Hyperparameters
 IMG_SIZE = 224
@@ -34,11 +36,11 @@ LEARNING_RATE = 1e-4
 EPOCHS = 25 # Set a max; EarlyStopping will find the best
 EARLY_STOP_PATIENCE = 5
 MODEL_SAVE_PATH = MODELS_DIR / "model_1_basic_cnn_best.pth"
+HISTORY_SAVE_PATH = RESULTS_DIR / "model_1_history.json"
 
 # Set device (GPU or CPU)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
-
 
 class Model1_BasicCNN(nn.Module):
     def __init__(self):
@@ -81,9 +83,6 @@ try:
     print(f"\nSuccess! Output shape: {output.shape}") # Should be [1, 1]
 except Exception as e:
     print(f"\nError during model test: {e}")
-
-
-
     # Define transforms
 # Training transforms include augmentation
 train_transform = transforms.Compose([
@@ -109,8 +108,9 @@ train_dataset = PneumoniaDataset(PROCESSED_DIR / "train_split.csv", transform=tr
 val_dataset = PneumoniaDataset(PROCESSED_DIR / "val_split.csv", transform=val_transform)
 
 # Create DataLoaders
-train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=4, pin_memory=True)
-val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=4, pin_memory=True)
+# Create DataLoaders
+train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=0, pin_memory=True)
+val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=0, pin_memory=True)
 
 print(f"DataLoaders created.")
 print(f"Training batches: {len(train_loader)}")
@@ -131,10 +131,15 @@ print(f"Calculated 'pos_weight' for loss function: {pos_weight.item():.4f}")
 # and our model outputs raw logits (not a sigmoid).
 criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
-
-
 best_val_loss = float('inf')
 epochs_no_improve = 0
+
+history = {
+    'train_loss': [],
+    'val_loss': [],
+    'train_acc': [],
+    'val_acc': []
+}
 
 print("Starting training...")
 
@@ -142,6 +147,8 @@ for epoch in range(EPOCHS):
     # --- Training Phase ---
     model.train() # Set model to training mode
     train_loss = 0.0
+    train_correct = 0
+    train_total = 0
     
     # Use tqdm for a progress bar
     train_pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{EPOCHS} [Train]", leave=False)
@@ -155,21 +162,34 @@ for epoch in range(EPOCHS):
         # Forward pass
         outputs = model(inputs)
         
-        # Calculate loss (squeeze outputs to match labels shape)
-        loss = criterion(outputs.squeeze(), labels)
-        
+        # Calculate loss (squeeze outputs and make labels float)
+        # We use labels.float() because BCEWithLogitsLoss expects float targets
+        squeezed_outputs = outputs.squeeze()
+        float_labels = labels.float() 
+        loss = criterion(squeezed_outputs, float_labels)
+
         # Backward pass and optimize
         loss.backward()
         optimizer.step()
-        
+
         train_loss += loss.item()
+        
+        # --- ADD THIS FOR ACCURACY ---
+        preds = torch.sigmoid(squeezed_outputs) > 0.5
+        train_correct += (preds == labels).sum().item()
+        train_total += labels.size(0)
+        # -----------------------------
+        
         train_pbar.set_postfix({"loss": loss.item()})
         
     avg_train_loss = train_loss / len(train_loader)
+    avg_train_acc = train_correct / train_total
     
     # --- Validation Phase ---
     model.eval() # Set model to evaluation mode
     val_loss = 0.0
+    val_correct = 0
+    val_total = 0
     
     with torch.no_grad(): # Disable gradient calculation
         val_pbar = tqdm(val_loader, desc=f"Epoch {epoch+1}/{EPOCHS} [Val]", leave=False)
@@ -177,13 +197,32 @@ for epoch in range(EPOCHS):
             inputs, labels = inputs.to(device), labels.to(device)
             
             outputs = model(inputs)
-            loss = criterion(outputs.squeeze(), labels)
+            
+            # Squeeze outputs and make labels float
+            squeezed_outputs = outputs.squeeze()
+            float_labels = labels.float()
+            loss = criterion(squeezed_outputs, float_labels)
             val_loss += loss.item()
+
+            # --- ADD THIS FOR ACCURACY ---
+            preds = torch.sigmoid(squeezed_outputs) > 0.5
+            val_correct += (preds == labels).sum().item()
+            val_total += labels.size(0)
+            # -----------------------------
+            
             val_pbar.set_postfix({"loss": loss.item()})
             
     avg_val_loss = val_loss / len(val_loader)
+    avg_val_acc = val_correct / val_total
     
-    print(f"Epoch {epoch+1}/{EPOCHS} | Train Loss: {avg_train_loss:.4f} | Val Loss: {avg_val_loss:.4f}")
+    # Print all metrics
+    print(f"Epoch {epoch+1}/{EPOCHS} | Train Loss: {avg_train_loss:.4f} | Train Acc: {avg_train_acc:.4f} | Val Loss: {avg_val_loss:.4f} | Val Acc: {avg_val_acc:.4f}")
+     # --- ADD THIS TO SAVE HISTORY ---
+    history['train_loss'].append(avg_train_loss)
+    history['train_acc'].append(avg_train_acc)
+    history['val_loss'].append(avg_val_loss)
+    history['val_acc'].append(avg_val_acc)
+     # --------------------------------
 
     # --- ModelCheckpoint Logic ---
     if avg_val_loss < best_val_loss:
@@ -201,3 +240,10 @@ for epoch in range(EPOCHS):
         break
 
 print(f"\nTraining finished. Best model saved to {MODEL_SAVE_PATH}")
+# --- ADD THIS TO SAVE THE JSON FILE ---
+import json
+print(f"Saving training history to {HISTORY_SAVE_PATH}")
+with open(HISTORY_SAVE_PATH, 'w') as f:
+    json.dump(history, f, indent=4)
+print("History saved successfully.")
+# -------------------------------------
