@@ -44,7 +44,7 @@ class Model1_BasicCNN(nn.Module):
 # Path setup taaki 'Models' folder mil jaaye
 sys.path.append(str(Path.cwd()))
 try:
-    from Models.model2 import DeeperCNN
+    from models.model2 import DeeperCNN
     print("Successfully imported DeeperCNN from Models/model2.py")
 except ImportError:
     print("ERROR: Could not import DeeperCNN. Make sure 'Models/model2.py' exists.")
