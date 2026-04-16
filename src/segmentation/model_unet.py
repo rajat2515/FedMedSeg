@@ -211,6 +211,87 @@ class MobileNetV2UNet(nn.Module):
         print(f"[Params]  Trainable: {trainable:,} / Total: {total:,}")
 
 
+# ── Custom CNN Baselines ───────────────────────────────────────────────────────
+
+class ConvBlock(nn.Module):
+    """Basic convolutional block: Conv -> BN -> ReLU -> Conv -> BN -> ReLU"""
+    def __init__(self, in_ch, out_ch):
+        super().__init__()
+        self.conv = nn.Sequential(
+            nn.Conv2d(in_ch, out_ch, 3, padding=1, bias=False),
+            nn.BatchNorm2d(out_ch),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(out_ch, out_ch, 3, padding=1, bias=False),
+            nn.BatchNorm2d(out_ch),
+            nn.ReLU(inplace=True)
+        )
+    def forward(self, x):
+        return self.conv(x)
+
+class CustomCNNUnet(nn.Module):
+    """
+    A customizable U-Net used for the "from scratch" baseline models.
+    Supports depth=2 (Model 1) and depth=3 (Model 2).
+    """
+    def __init__(self, depth: int = 2):
+        super().__init__()
+        self.depth = depth
+        
+        # ── Encoder ─────────────────────────────
+        self.enc1 = ConvBlock(3, 16)
+        self.enc2 = ConvBlock(16, 32)
+        if self.depth == 3:
+            self.enc3 = ConvBlock(32, 64)
+            self.bottleneck = ConvBlock(64, 128)
+        else:
+            self.bottleneck = ConvBlock(32, 64)
+            
+        self.pool = nn.MaxPool2d(2)
+        
+        # ── Decoder ─────────────────────────────
+        if self.depth == 3:
+            self.dec3 = DecoderBlock(in_channels=128, skip_channels=64, out_channels=64)
+            self.dec2 = DecoderBlock(in_channels=64,  skip_channels=32, out_channels=32)
+            self.dec1 = DecoderBlock(in_channels=32,  skip_channels=16, out_channels=16)
+        else:
+            self.dec2 = DecoderBlock(in_channels=64,  skip_channels=32, out_channels=32)
+            self.dec1 = DecoderBlock(in_channels=32,  skip_channels=16, out_channels=16)
+            
+        self.seg_head = nn.Conv2d(16, 1, kernel_size=1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # Encoder
+        x1 = self.enc1(x)                # skip1
+        p1 = self.pool(x1)
+        
+        x2 = self.enc2(p1)               # skip2
+        p2 = self.pool(x2)
+        
+        if self.depth == 3:
+            x3 = self.enc3(p2)           # skip3
+            p3 = self.pool(x3)
+            bot = self.bottleneck(p3)
+            
+            # Decoder
+            d3 = self.dec3(bot, x3)
+            d2 = self.dec2(d3, x2)
+            d1 = self.dec1(d2, x1)
+        else:
+            bot = self.bottleneck(p2)
+            
+            # Decoder
+            d2 = self.dec2(bot, x2)
+            d1 = self.dec1(d2, x1)
+            
+        logits = self.seg_head(d1)
+        return torch.sigmoid(logits)
+
+    def unfreeze_encoder(self, num_blocks: int = 5):
+        # This function exists purely for compatibility with the training loop
+        pass
+
+
+
 # ── Shape Assertion Test ───────────────────────────────────────────────────────
 if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -239,5 +320,14 @@ if __name__ == "__main__":
         "FAIL: Output should be probabilities in [0, 1]"
 
     print("\n✓ Shape assertion passed:  (B, 1, 224, 224)")
-    print("✓ Value range assertion:   [0, 1]")
+    print("\n✓ Value range assertion:   [0, 1]")
     print("✓ MobileNetV2-UNet ready for training!")
+
+    # Test Custom Models
+    model1 = CustomCNNUnet(depth=2).to(device)
+    model2 = CustomCNNUnet(depth=3).to(device)
+    out1 = model1(dummy_input)
+    out2 = model2(dummy_input)
+    assert out1.shape == (2, 1, 224, 224)
+    assert out2.shape == (2, 1, 224, 224)
+    print("\n✓ CustomCNNUnet baselines ready for tracking!")
