@@ -174,8 +174,8 @@ class MobileNetV2UNet(nn.Module):
         skip2 = self.encoder_blocks[:4](x)    # (B,  24,  56,  56)
         skip3 = self.encoder_blocks[:7](x)    # (B,  32,  28,  28)
         skip4 = self.encoder_blocks[:14](x)   # (B,  96,  14,  14)
-        bottleneck = self.encoder_blocks(x)   # (B, 320,   7,   7)  — full encoder
-        # Note: encoder_blocks has 19 blocks (index 0-18), [:19] == full pass
+        bottleneck = self.encoder_blocks[:18](x)  # (B, 320,   7,   7)  — stops before 1280-ch expansion
+        # Note: encoder_blocks[:19] would output 1280ch; [:18] gives 320ch (block 17 output)
 
         # ── Decoder: upsample + skip connections ──────────────────────────────
         d4 = self.decoder4(bottleneck, skip4)  # (B, 256, 14, 14)
