@@ -170,12 +170,33 @@ class MobileNetV2UNet(nn.Module):
             Tensor: Predicted mask probabilities. Shape: (B, 1, 224, 224)
         """
         # ── Encoder: extract feature maps at 5 resolutions ───────────────────
-        skip1 = self.encoder_blocks[:2](x)    # (B,  16, 112, 112)
-        skip2 = self.encoder_blocks[:4](x)    # (B,  24,  56,  56)
-        skip3 = self.encoder_blocks[:7](x)    # (B,  32,  28,  28)
-        skip4 = self.encoder_blocks[:14](x)   # (B,  96,  14,  14)
-        bottleneck = self.encoder_blocks[:18](x)  # (B, 320,   7,   7)  — stops before 1280-ch expansion
-        # Note: encoder_blocks[:19] would output 1280ch; [:18] gives 320ch (block 17 output)
+        # IMPORTANT: Pass features through sequentially (one forward pass).
+        # Each skip is taken at the correct intermediate layer.
+        # This avoids re-running the encoder from scratch 5 times.
+        x = self.encoder_blocks[0](x)          # block 0
+        x = self.encoder_blocks[1](x)
+        skip1 = x                              # (B,  16, 112, 112)
+        x = self.encoder_blocks[2](x)
+        x = self.encoder_blocks[3](x)
+        skip2 = x                              # (B,  24,  56,  56)
+        x = self.encoder_blocks[4](x)
+        x = self.encoder_blocks[5](x)
+        x = self.encoder_blocks[6](x)
+        skip3 = x                              # (B,  32,  28,  28)
+        x = self.encoder_blocks[7](x)
+        x = self.encoder_blocks[8](x)
+        x = self.encoder_blocks[9](x)
+        x = self.encoder_blocks[10](x)
+        x = self.encoder_blocks[11](x)
+        x = self.encoder_blocks[12](x)
+        x = self.encoder_blocks[13](x)
+        skip4 = x                              # (B,  96,  14,  14)
+        x = self.encoder_blocks[14](x)
+        x = self.encoder_blocks[15](x)
+        x = self.encoder_blocks[16](x)
+        x = self.encoder_blocks[17](x)
+        bottleneck = x                         # (B, 320,   7,   7)
+        # Note: encoder_blocks[18] would expand to 1280ch; we stop at block 17.
 
         # ── Decoder: upsample + skip connections ──────────────────────────────
         d4 = self.decoder4(bottleneck, skip4)  # (B, 256, 14, 14)
@@ -186,7 +207,7 @@ class MobileNetV2UNet(nn.Module):
 
         # ── Segmentation head + sigmoid ───────────────────────────────────────
         logits = self.seg_head(d0)             # (B,   1, 224, 224)
-        return torch.sigmoid(logits)            # probabilities in [0, 1]
+        return torch.sigmoid(logits)           # probabilities in [0, 1]
 
     def unfreeze_encoder(self, num_blocks: int = 5):
         """

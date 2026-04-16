@@ -33,7 +33,7 @@ CONFIG = {
     "results_dir":    str(PROJECT_ROOT / "results" / "ablation"),
     "num_epochs":     12,      # Short run for trajectory comparison
     "batch_size":     16,
-    "num_workers":    4,
+    "num_workers":    0,       # 0 on Windows to avoid multiprocessing deadlock
     "lr_init":        1e-4,
     "random_seed":    42,
 }
