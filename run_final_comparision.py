@@ -64,7 +64,12 @@ MODEL2_WEIGHTS = project_root / 'model_2_best.pth' # Yeh root folder mein save h
 MODEL3_WEIGHTS = project_root / 'models' / 'model_3_mobilenet_best.pth'
 
 BATCH_SIZE = 32
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+if torch.cuda.is_available():
+    DEVICE = torch.device("cuda")
+elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+    DEVICE = torch.device("mps")
+else:
+    DEVICE = torch.device("cpu")
 
 # --- 4. Evaluation Function ---
 def evaluate_model(model, dataloader, device):

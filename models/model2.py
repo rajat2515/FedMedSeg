@@ -53,8 +53,13 @@ class DeeperCNN(nn.Module):
 
 # Main execution
 if __name__ == "__main__":
-    # Check CUDA availability
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # Check device availability
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        device = torch.device("mps")
+    else:
+        device = torch.device("cpu")
     print(f"Using device: {device}")
     
     if torch.cuda.is_available():

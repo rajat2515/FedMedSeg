@@ -39,7 +39,12 @@ MODEL_SAVE_PATH = MODELS_DIR / "model_1_basic_cnn_best.pth"
 HISTORY_SAVE_PATH = RESULTS_DIR / "model_1_history.json"
 
 # Set device (GPU or CPU)
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+if torch.cuda.is_available():
+    device = torch.device("cuda")
+elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+    device = torch.device("mps")
+else:
+    device = torch.device("cpu")
 print(f"Using device: {device}")
 
 class Model1_BasicCNN(nn.Module):

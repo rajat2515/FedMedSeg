@@ -40,6 +40,7 @@ import matplotlib
 matplotlib.use("Agg")   # Non-interactive backend — safe for servers/notebooks
 import matplotlib.pyplot as plt
 import numpy as np
+import argparse
 
 # ── Path setup so imports work from project root ──────────────────────────────
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -49,6 +50,7 @@ from segmentation.model_unet    import MobileNetV2UNet
 from segmentation.loss          import DiceBCELoss
 from segmentation.metrics       import compute_all_metrics
 from segmentation.dataset_rsna  import RSNAPneumoniaDataset
+from segmentation.device_utils  import add_device_arg, get_device
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -339,11 +341,13 @@ def main():
     print("  FedMedSeg Phase 2 — Segmentation Training")
     print("=" * 65)
 
+    # ── CLI args ──────────────────────────────────────────────────────────────
+    parser = argparse.ArgumentParser(description="FedMedSeg Segmentation Training")
+    add_device_arg(parser)
+    args = parser.parse_args()
+
     # ── Device ───────────────────────────────────────────────────────────────
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"\nDevice: {device}")
-    if device.type == "cuda":
-        print(f"GPU:    {torch.cuda.get_device_name(0)}")
+    device = get_device(args.device)
 
     # ── Set random seeds for reproducibility ──────────────────────────────────
     torch.manual_seed(CONFIG["random_seed"])
@@ -380,14 +384,14 @@ def main():
         batch_size  = CONFIG["batch_size"],
         shuffle     = True,
         num_workers = CONFIG["num_workers"],
-        pin_memory  = True if device.type == "cuda" else False,
+        pin_memory  = device.type in ("cuda", "mps"),
     )
     val_loader = DataLoader(
         val_dataset,
         batch_size  = CONFIG["batch_size"],
         shuffle     = False,
         num_workers = CONFIG["num_workers"],
-        pin_memory  = True if device.type == "cuda" else False,
+        pin_memory  = device.type in ("cuda", "mps"),
     )
     print(f"Train: {len(train_dataset)} samples | Val: {len(val_dataset)} samples")
 

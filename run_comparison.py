@@ -59,7 +59,12 @@ MODEL2_WEIGHTS = project_root / 'model_2_best.pth'
 BATCH_SIZE = 32
 OUTPUT_IMAGE_PATH = project_root / 'comparison_plots.png'
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+if torch.cuda.is_available():
+    device = torch.device("cuda")
+elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+    device = torch.device("mps")
+else:
+    device = torch.device("cpu")
 
 def evaluate_model(model, dataloader, device):
     """Runs a model over the validation set and calculates all metrics."""

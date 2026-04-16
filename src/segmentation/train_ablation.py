@@ -24,6 +24,7 @@ from segmentation.loss          import DiceBCELoss
 from segmentation.metrics       import compute_all_metrics
 from segmentation.dataset_rsna  import RSNAPneumoniaDataset
 from segmentation.train_segmentation import get_transforms, train_one_epoch, validate
+from segmentation.device_utils import add_device_arg, get_device, safe_empty_cache
 
 CONFIG = {
     "rsna_root":      str(PROJECT_ROOT / "data" / "rsna_pneumonia"),
@@ -95,7 +96,7 @@ def train_model_configuration(model_name: str, model_conf: dict, train_loader, v
         
     # Free memory
     del model
-    torch.cuda.empty_cache()
+    safe_empty_cache(device)
     
     return history
 
@@ -103,10 +104,11 @@ def main():
     parser = argparse.ArgumentParser(description="Run 5-Model Ablation Study")
     parser.add_argument("--model", type=str, choices=list(MODELS_CONFIG.keys()), 
                         help="Specify which model to run. If omitted, runs all 5 sequentially.")
+    add_device_arg(parser)
     args = parser.parse_args()
 
     print("\nStarting 5-Model Ablation Study\n")
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = get_device(args.device)
     
     torch.manual_seed(CONFIG["random_seed"])
     np.random.seed(CONFIG["random_seed"])
