@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 matplotlib
 numpy
 pandas
@@ -10,3 +11,13 @@ torchmetrics
 torchsummary
 torchvision
 tqdm
+=======
+torch
+torchvision
+pydicom
+pandas
+numpy
+matplotlib
+tqdm
+pillow
+>>>>>>> 44799d6f2dc83b194e117038f88ad1fe1596461c

@@ -1,8 +1,23 @@
+# Data
 data/
+
+# Python
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
 .ipynb_checkpoints/
-data/
-__pycache__/
-*.pyc
-.ipynb_checkpoints/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Model weights (large files)
+*.pth
+
+# Results (generated outputs)
+results/
+
+# OS
+.DS_Store
