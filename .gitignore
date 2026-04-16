@@ -17,7 +17,10 @@ env/
 *.pth
 
 # Results (generated outputs)
-results/
+results/*
+!results/**/
+!results/**/*.csv
+!results/**/*.png
 
 # OS
 .DS_Store
