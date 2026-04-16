@@ -1,0 +1,80 @@
+# 🏗️ FedMedSeg: Architecture & Federation Guide
+
+This document is the **Technical Blueprint** of your project. It explains the "What" and "How" of every model and the Federated System itself.
+
+---
+
+## 🔬 Part 1: The 5-Model Research Framework (Phase 1)
+
+We didn't just pick a model; we scientifically evolved one. Here is the journey:
+
+### **1. Model 1: The Baseline (Basic CNN)**
+*   **What is it?** A simple custom neural network built from scratch.
+*   **Architecture:** 2 Convolutional Blocks + 2 Fully Connected Layers.
+*   **Purpose:** To establish a "Performance Floor." If a complex model can't beat this, it's useless.
+*   **Result:** ~93% Accuracy. Good, but struggled with subtle pneumonia cases.
+*   **Why use it?** To prove that "Simple is not enough."
+
+### **2. Model 2: The Deep Approach (VGG-Style)**
+*   **What is it?** A deeper version of Model 1.
+*   **Architecture:** 3 Convolutional Blocks (double the filters) + deeper Classifier.
+*   **Purpose:** To test: "Does adding more layers solve the problem?"
+*   **Result:** ~95% Accuracy. Better, but the parameter count exploded (25M+ params).
+*   **Verdict:** Too heavy for federated clients (slow to transmit).
+
+### **3. Model 3: MobileNetV2 (The Efficiency King)**
+We switched to **Transfer Learning** using MobileNetV2 because it is optimized for mobile/edge devices (perfect for hospitals). We created 3 variants:
+
+#### **Model 3A: Feature Extraction (Frozen)**
+*   **Strategy:** Freeze ALL base layers. Only train the final classifier.
+*   **Pros:** Extremely fast training (only ~1,000 parameters to learn).
+*   **Cons:** **Underfitting (91% F1).** The pre-trained "ImageNet" weights (cats/dogs) didn't understand X-ray textures well enough.
+
+#### **Model 3B: Partial Fine-Tuning (The Sweet Spot)** 🌟
+*   **Strategy:** Freeze the bottom 70% (basic shapes). **Unfreeze the top 30%** (complex textures).
+*   **Why?** Mid-level features (like lung opacity) need to be re-learned. Low-level features (lines/curves) don't.
+*   **Result:** **97% F1-Score.** Matches the full model's accuracy but is much faster and lighter.
+
+#### **Model 3C: Full Fine-Tuning**
+*   **Strategy:** Unfreeze EVERYTHING.
+*   **Pros:** Maximum theoretical accuracy (97.5%).
+*   **Cons:** **Overkill.** Requires training 2.2M parameters. High risk of "Catastrophic Forgetting" (forgetting general features) and high communication cost.
+
+---
+
+## 🌐 Part 2: Building the Federated System (Phase 2)
+
+We don't just "turn on" Federated Learning. We build it in layers to prove it works.
+
+### **Step 1: The Isolated Simulation (The Control Group)**
+Before connecting hospitals, we must simulate "Life without Federation."
+*   **Scenario:**
+    *   **Client A (Specialist):** Has 75% Pneumonia data. Trains a model *locally* and never shares it.
+    *   **Client B (Clinic):** Has 75% Normal data. Trains *locally*.
+*   **The Result:** Two "biased" models.
+    *   Model A creates many **False Positives** (thinks everyone is sick).
+    *   Model B creates many **False Negatives** (misses sickness).
+*   **Purpose:** This proves **WHY we need Federation.** Isolated hospitals fail.
+
+### **Step 2: Federated Averaging (FedAvg)**
+This is the standard "Collaboration" protocol using the **Flower Framework**.
+*   **The Loop:**
+    1.  **Server** sends Global Model to Clients A & B.
+    2.  **Clients** train for 1 epoch on their local data.
+    3.  **Clients** send back their *updated weights* (not data).
+    4.  **Server** averages the weights: `New_Global = (Weight_A + Weight_B) / 2`.
+*   **Outcome:** A single model that is "balanced." It learns from A's sickness data and B's healthy data without seeing the images.
+
+### **Step 3: FedProx (The Advanced Algorithm)**
+*   **The Problem:** In the real world, Client A might have a fast GPU, and Client B might have a slow laptop. Or their data might be *too* different (Non-IID).
+*   **The Risk:** Client A trains huge updates, pulling the global model wildly in one direction ("Client Drift").
+*   **The Solution (FedProx):**
+    *   It adds a mathematical **"Proximal Term"** ($\mu$) to the Loss Function.
+    *   **In English:** It punishes the client if its local model tries to change *too much* from the Global Model.
+    *   **Analogy:** Ideally, FedAvg is like a "free-for-all" meeting. FedProx is like a meeting with a moderator who says, "You can have your opinion, but don't stray too far from the group consensus."
+
+### **How We Implemented It (Code Structure)**
+*   `src/models/`: Holds the 5 neural network definitions.
+*   `src/clients/`: Contains the Flower `NumPyClient` logic (the "Hospital" code).
+*   `src/server/`: Contains the Aggregation logic (FedAvg/FedProx).
+*   `scripts/run_isolated.py`: Runs the "No-Federation" experiment to generate baseline metrics.

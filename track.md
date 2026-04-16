@@ -1,0 +1,297 @@
+# 📋 FedMedSeg Phase 2 — Technical Implementation Tracker
+
+> **Purpose:** This document records **every** method, algorithm, formula, and design decision used in the Phase 2 Semantic Segmentation implementation. It is written so that even if you have never seen the code, you can understand *what* was built, *why*, and *how*.
+
+---
+
+## 1. Architecture: MobileNetV2-UNet
+
+### What is U-Net?
+U-Net is a neural network shaped like the letter **"U"**. It has two halves:
+- **Encoder (Left side / Contracting Path):** Shrinks the image step by step, extracting *what* is in the image (features like edges, textures, shapes).
+- **Decoder (Right side / Expanding Path):** Expands those features back to the original image size, deciding *where* each pixel belongs (infected or healthy).
+
+### Why MobileNetV2 as the Encoder?
+Instead of building the Encoder from scratch, we reuse the **MobileNetV2** model (the "champion" from Phase 1). MobileNetV2 already knows how to extract meaningful features from chest X-rays because it was pre-trained on ImageNet and fine-tuned on our pneumonia dataset.
+
+### The Skip Connections (The Key Innovation)
+When the Encoder shrinks the image from `224×224` → `112` → `56` → `28` → `14` → `7`, it loses fine spatial details (exact edges of the pneumonia). **Skip connections** copy the feature maps from the Encoder and paste them into the Decoder at the same resolution level. This gives the Decoder both:
+- **High-level understanding** (from the deep layers): "This region is pneumonia"
+- **Fine spatial details** (from the early layers): "The edge of the pneumonia is exactly here"
+
+### MobileNetV2 Feature Extraction Points
+We tap into MobileNetV2's `features` module at specific block indices to get maps at different resolutions:
+
+| Skip | MobileNetV2 Block Index | Output Resolution | Channels | What It Captures |
+|------|------------------------|-------------------|----------|------------------|
+| Skip 1 | Block 1 (index 1) | 112 × 112 | 16 | Low-level edges, textures |
+| Skip 2 | Block 3 (index 3) | 56 × 56 | 24 | Simple patterns |
+| Skip 3 | Block 6 (index 6) | 28 × 28 | 32 | Medium-level structures |
+| Skip 4 | Block 13 (index 13) | 14 × 14 | 96 | High-level organ shapes |
+| Bottleneck | Block 17 (index 17) | 7 × 7 | 320 | Deepest abstract features |
+
+### Decoder Blocks
+Each decoder block performs:
+1. **Transposed Convolution (`ConvTranspose2d`)**: Doubles the spatial size (e.g., `7×7` → `14×14`).
+2. **Concatenation with Skip**: The skip connection feature map is concatenated channel-wise.
+3. **Two Conv-BN-ReLU layers**: Refine the combined features.
+
+```
+DecoderBlock(in_ch, skip_ch, out_ch):
+    ConvTranspose2d(in_ch, out_ch, kernel=2, stride=2)   # Upsample ×2
+    Concatenate(upsampled, skip_features)                  # Add spatial detail
+    Conv2d(out_ch + skip_ch, out_ch, kernel=3, padding=1)  # Refine
+    BatchNorm2d(out_ch)
+    ReLU()
+    Conv2d(out_ch, out_ch, kernel=3, padding=1)            # Refine more
+    BatchNorm2d(out_ch)
+    ReLU()
+```
+
+### Final Output
+A `1×1 Convolution` maps the last decoder output (16 channels) to 1 channel, then a **Sigmoid** activation squeezes every pixel value to `[0, 1]`:
+- Values close to **1.0** = Pneumonia (infected pixel)
+- Values close to **0.0** = Normal (healthy pixel)
+
+**Output Shape:** Input `(B, 3, 224, 224)` → Output `(B, 1, 224, 224)` — a probability mask the same size as the input image.
+
+---
+
+## 2. Loss Function: Dice-BCE Hybrid Loss
+
+### The Problem with BCE Alone
+Standard **Binary Cross-Entropy (BCE)** treats every pixel independently. In chest X-rays, most of the image is healthy lung tissue (~85-90%), so a lazy model can score well just by predicting "healthy" everywhere. BCE cannot punish this behavior strongly enough.
+
+### Dice Loss — The Solution
+
+**Dice Coefficient** measures the *overlap* between the predicted mask (P) and the ground truth mask (G):
+
+$$
+\text{Dice}(P, G) = \frac{2 \times |P \cap G|}{|P| + |G|}
+$$
+
+In differentiable (soft) form for training:
+
+$$
+\text{Dice}(P, G) = \frac{2 \sum_{i} p_i \cdot g_i + \epsilon}{\sum_{i} p_i + \sum_{i} g_i + \epsilon}
+$$
+
+Where:
+- $p_i$ = predicted probability for pixel $i$ (between 0 and 1)
+- $g_i$ = ground truth label for pixel $i$ (0 or 1)
+- $\epsilon$ = small smoothing constant (1e-6) to prevent division by zero
+
+**Dice Loss** is then:
+
+$$
+\mathcal{L}_{\text{Dice}} = 1 - \text{Dice}(P, G)
+$$
+
+- If prediction perfectly overlaps truth → Dice = 1.0 → Loss = 0
+- If prediction is completely wrong → Dice ≈ 0 → Loss ≈ 1
+
+### The Hybrid: Dice + BCE
+
+$$
+\mathcal{L}_{\text{Total}} = \mathcal{L}_{\text{BCE}} + \mathcal{L}_{\text{Dice}}
+$$
+
+- **BCE** handles individual pixel accuracy (sharp gradients for easy learning).
+- **Dice** handles regional overlap (prevents the model from ignoring small pneumonia regions).
+
+Together, they balance pixel-level precision with region-level accuracy.
+
+---
+
+## 3. Evaluation Metrics
+
+### 3.1 Dice Coefficient (F1 for Segmentation)
+
+$$
+\text{Dice} = \frac{2 \times TP}{2 \times TP + FP + FN}
+$$
+
+Where (at the pixel level):
+- **TP** (True Positive): Pixel correctly identified as Pneumonia
+- **FP** (False Positive): Healthy pixel wrongly marked as Pneumonia
+- **FN** (False Negative): Pneumonia pixel missed by the model
+
+**Score Range:** 0 (no overlap) to 1 (perfect overlap).
+**Target for this project:** Dice > 0.65 is good, > 0.75 is excellent.
+
+### 3.2 Intersection over Union (IoU / Jaccard Index)
+
+$$
+\text{IoU} = \frac{|P \cap G|}{|P \cup G|} = \frac{TP}{TP + FP + FN}
+$$
+
+IoU is stricter than Dice — it penalizes errors more harshly. The relationship is:
+
+$$
+\text{IoU} = \frac{\text{Dice}}{2 - \text{Dice}}
+$$
+
+**Score Range:** 0 to 1. Always lower than Dice for the same prediction.
+
+### 3.3 Pixel Accuracy
+
+$$
+\text{PixelAccuracy} = \frac{TP + TN}{TP + TN + FP + FN} = \frac{\text{Correct Pixels}}{\text{Total Pixels}}
+$$
+
+Simple but can be misleading (a model predicting all pixels as "healthy" could still get ~90% accuracy if only 10% of pixels are infected). That is why we use Dice/IoU as the **primary** metrics and Pixel Accuracy as a **secondary** sanity check.
+
+---
+
+## 4. Dataset: RSNA Pneumonia Detection Challenge
+
+### Why Not the Kermany Dataset?
+The Kermany dataset (used in Phase 1) only has **image-level labels** ("Pneumonia" or "Normal"). It does NOT tell us *where* in the image the pneumonia is. For segmentation, we need **pixel-level labels** (masks).
+
+### RSNA Dataset Structure
+- **Images:** DICOM format (`.dcm`) — the standard medical imaging format.
+- **Labels:** A CSV file (`stage_2_train_labels.csv`) with columns:
+  - `patientId` — links to the DICOM filename
+  - `x, y, width, height` — bounding box around the pneumonia opacity
+  - `Target` — 1 (Pneumonia) or 0 (Normal)
+
+### Bounding Box → Binary Mask Conversion
+Since the RSNA dataset provides bounding boxes (not pixel-perfect masks), we convert them:
+
+```
+1. Create a black image (all zeros) of size 224×224
+2. For each bounding box in the patient's record:
+   a. Scale the coordinates from original DICOM size (usually 1024×1024) to 224×224
+   b. Draw a filled white rectangle at the scaled coordinates
+3. The result is a binary mask where:
+   - White (1) = Pneumonia region
+   - Black (0) = Healthy region
+```
+
+For **Normal** patients (Target=0), the mask is entirely black (no infection).
+
+> **Note:** Bounding boxes are an approximation — a real pneumonia region is irregularly shaped, but boxes give the U-Net enough signal to learn the general location and shape.
+
+### 5,000 Image Subset Strategy
+- 2,500 images with `Target=1` (Pneumonia, have bounding boxes)
+- 2,500 images with `Target=0` (Normal, all-black masks)
+- Split: 80% Training (4,000) / 20% Validation (1,000)
+
+---
+
+## 5. Data Augmentation (Synchronized)
+
+For segmentation, augmentations MUST be applied **identically** to both the image and its mask. If you rotate the X-ray by 15°, you must rotate the mask by exactly 15° too.
+
+| Augmentation | Why | Image | Mask |
+|--------------|-----|-------|------|
+| Random Horizontal Flip | Lungs are roughly symmetric | Applied | Applied (same flip) |
+| Random Rotation (±10°) | X-ray angle varies by machine | Applied | Applied (same angle) |
+| Random Brightness/Contrast | Different X-ray machines have different exposures | Applied | **NOT** applied (mask is binary) |
+| Resize to 224×224 | Standardize input size | Applied | Applied |
+| Normalize (ImageNet stats) | MobileNetV2 expects ImageNet-normalized input | Applied | **NOT** applied |
+
+---
+
+## 6. Training Strategy
+
+### Transfer Learning: Encoder Initialization
+The MobileNetV2 Encoder is loaded with **ImageNet pre-trained weights** (same as Phase 1). This means:
+- The Encoder already understands edges, textures, and shapes.
+- We **freeze** the Encoder for the first few epochs so only the Decoder learns.
+- After the Decoder stabilizes, we **unfreeze** the last few Encoder blocks for fine-tuning.
+
+### Optimizer: Adam
+$$
+\theta_{t+1} = \theta_t - \frac{\eta}{\sqrt{\hat{v}_t} + \epsilon} \cdot \hat{m}_t
+$$
+
+Adam adapts the learning rate per-parameter using running averages of the gradient ($m$) and squared gradient ($v$). We use:
+- Learning Rate: `1e-4` (conservative for medical imaging)
+- Weight Decay: `1e-5` (mild regularization)
+
+### Learning Rate Scheduler: ReduceLROnPlateau
+If the validation Dice score does not improve for `patience=5` epochs, the learning rate is reduced by a factor of 0.5:
+
+$$
+\eta_{\text{new}} = \eta_{\text{old}} \times 0.5
+$$
+
+This prevents the model from overshooting the optimum.
+
+### Early Stopping
+If validation Dice does not improve for `patience=10` epochs, training is stopped to prevent overfitting.
+
+### Checkpointing
+The model weights are saved whenever a **new best validation Dice score** is achieved. This ensures we always keep the best model, even if training continues past the peak.
+
+---
+
+## 7. Prediction & Inference Pipeline
+
+When testing on a **new, unseen X-ray**:
+
+```
+1. Load the X-ray image
+2. Resize to 224×224, convert to RGB, normalize with ImageNet stats
+3. Pass through the trained MobileNetV2-UNet
+4. Output: 224×224 probability map (each pixel = probability of pneumonia)
+5. Threshold at 0.5: pixels > 0.5 → Pneumonia, pixels ≤ 0.5 → Normal
+6. Overlay the binary mask on the original X-ray for visualization
+```
+
+---
+
+## 8. Results Structure
+
+All outputs are saved to `results/segmentation/`:
+
+| Output | Format | Purpose |
+|--------|--------|---------|
+| `training_logs.csv` | CSV | Every epoch: loss, dice, iou, pixel_acc for train & val |
+| `loss_curves.pdf` | PDF | Publication-ready train vs val loss curves |
+| `dice_iou_curves.pdf` | PDF | Dice & IoU progression over training |
+| `training_config.json` | JSON | All hyperparameters, dataset info, timestamps |
+| `model_evaluation_report.json` | JSON | Final test metrics with mean ± std |
+| `best_model_weights.pth` | PyTorch | Best model checkpoint |
+| `prediction_samples/` | PNGs | 20+ side-by-side comparisons |
+| `prediction_overlay/` | PNGs | Colored mask overlaid on original X-ray |
+
+---
+
+## 9. File Map
+
+| File | What It Contains | Key Classes/Functions |
+|------|-----------------|----------------------|
+| `src/segmentation/__init__.py` | Package init | — |
+| `src/segmentation/model_unet.py` | U-Net architecture | `MobileNetV2UNet`, `DecoderBlock` |
+| `src/segmentation/loss.py` | Loss functions | `DiceLoss`, `DiceBCELoss` |
+| `src/segmentation/metrics.py` | Evaluation metrics | `dice_coefficient`, `mean_iou`, `pixel_accuracy` |
+| `src/segmentation/dataset_rsna.py` | Data loading | `RSNAPneumoniaDataset` |
+| `src/segmentation/prepare_subset.py` | Subset extractor | `prepare_balanced_subset()` |
+| `src/segmentation/train_segmentation.py` | Training loop | `train_one_epoch()`, `validate()`, `main()` |
+| `notebooks/07-RSNA-Data-Preparation.ipynb` | Data inspection | Visual mask generation demo |
+| `notebooks/08-Segmentation-Training.ipynb` | Training showcase | Live training with plots |
+| `notebooks/09-Segmentation-Evaluation.ipynb` | Results & analysis | Publication-ready evaluation |
+
+---
+
+## 10. Glossary
+
+| Term | Meaning |
+|------|---------|
+| **Encoder** | The "understanding" half of U-Net — shrinks the image and extracts features |
+| **Decoder** | The "drawing" half — expands features back to full resolution to create a mask |
+| **Skip Connection** | A shortcut that copies early features to later layers to preserve fine details |
+| **DICOM (.dcm)** | Digital Imaging and Communications in Medicine — standard medical image format |
+| **Binary Mask** | A black-and-white image where white = infected area, black = healthy area |
+| **Dice Coefficient** | Measures how much the predicted mask overlaps with the true mask (0 to 1) |
+| **IoU (Jaccard)** | Stricter overlap metric — area of intersection divided by area of union |
+| **Transposed Convolution** | "Reverse" convolution that increases spatial resolution (upsampling) |
+| **Bounding Box** | A rectangle defined by (x, y, width, height) around a region of interest |
+| **Sigmoid** | Function that squeezes any number to the range [0, 1] — used for probabilities |
+
+---
+
+*Last Updated: 2026-04-16*
+*Phase: 2 — Semantic Segmentation*
