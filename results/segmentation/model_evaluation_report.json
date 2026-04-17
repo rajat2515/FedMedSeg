@@ -1,0 +1,29 @@
+{
+  "training_complete": true,
+  "best_val_dice": 0.6239406622591472,
+  "total_epochs_run": 26,
+  "timestamp": "2026-04-17T14:05:30.200919",
+  "checkpoint_path": "C:\\Users\\Vivek Singh Chauhan\\Desktop\\shubham\\FedMedSeg\\results\\segmentation\\best_model_weights.pth",
+  "config": {
+    "rsna_root": "C:\\Users\\Vivek Singh Chauhan\\Desktop\\shubham\\FedMedSeg\\data\\rsna_pneumonia",
+    "train_csv": "C:\\Users\\Vivek Singh Chauhan\\Desktop\\shubham\\FedMedSeg\\data\\rsna_pneumonia\\subset\\train_subset.csv",
+    "val_csv": "C:\\Users\\Vivek Singh Chauhan\\Desktop\\shubham\\FedMedSeg\\data\\rsna_pneumonia\\subset\\val_subset.csv",
+    "results_dir": "C:\\Users\\Vivek Singh Chauhan\\Desktop\\shubham\\FedMedSeg\\results\\segmentation",
+    "checkpoint_dir": "C:\\Users\\Vivek Singh Chauhan\\Desktop\\shubham\\FedMedSeg\\results\\segmentation",
+    "num_epochs": 30,
+    "phase_b_start": 10,
+    "batch_size": 16,
+    "num_workers": 4,
+    "lr_phase_a": 0.0001,
+    "lr_phase_b": 1e-05,
+    "weight_decay": 1e-05,
+    "scheduler_factor": 0.5,
+    "scheduler_patience": 5,
+    "early_stop_patience": 10,
+    "pretrained": true,
+    "prediction_threshold": 0.5,
+    "random_seed": 42,
+    "timestamp": "2026-04-17T13:27:04.243407",
+    "device": "cuda"
+  }
+}
