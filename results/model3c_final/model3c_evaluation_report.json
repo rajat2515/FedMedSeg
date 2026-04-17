@@ -1,0 +1,40 @@
+{
+  "model": "Model 3C \u2014 MobileNetV2-UNet Full Fine-Tune",
+  "best_val_dice": 0.6233653218027145,
+  "total_epochs_run": 26,
+  "early_stopped": true,
+  "safeguards": {
+    "heavy_augmentation": true,
+    "two_phase_training": true,
+    "gradient_clipping": 1.0,
+    "l2_weight_decay": 1e-05,
+    "reduce_lr_on_plateau": 7,
+    "cosine_annealing": true,
+    "early_stopping": 15,
+    "checkpointing": "best val_dice only"
+  },
+  "completed_at": "2026-04-17T13:21:21.023974",
+  "config": {
+    "rsna_root": "C:\\Users\\Vivek Singh Chauhan\\Desktop\\shubham\\FedMedSeg\\data\\rsna_pneumonia",
+    "train_csv": "C:\\Users\\Vivek Singh Chauhan\\Desktop\\shubham\\FedMedSeg\\data\\rsna_pneumonia\\subset\\train_subset.csv",
+    "val_csv": "C:\\Users\\Vivek Singh Chauhan\\Desktop\\shubham\\FedMedSeg\\data\\rsna_pneumonia\\subset\\val_subset.csv",
+    "results_dir": "C:\\Users\\Vivek Singh Chauhan\\Desktop\\shubham\\FedMedSeg\\results\\model3c_final",
+    "checkpoint_best": "C:\\Users\\Vivek Singh Chauhan\\Desktop\\shubham\\FedMedSeg\\results\\model3c_final\\model3c_best.pth",
+    "checkpoint_last": "C:\\Users\\Vivek Singh Chauhan\\Desktop\\shubham\\FedMedSeg\\results\\model3c_final\\model3c_last.pth",
+    "max_epochs": 100,
+    "phase_b_start": 15,
+    "lr_phase_a": 0.0001,
+    "lr_phase_b": 1e-05,
+    "weight_decay": 1e-05,
+    "grad_clip": 1.0,
+    "sched_factor": 0.5,
+    "sched_patience": 7,
+    "early_stop_patience": 15,
+    "batch_size": 16,
+    "num_workers": 0,
+    "threshold": 0.5,
+    "random_seed": 42,
+    "started_at": "2026-04-17T12:27:16.849212",
+    "device": "cuda"
+  }
+}
