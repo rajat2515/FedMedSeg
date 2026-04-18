@@ -1,0 +1,57 @@
+{
+  "model": "MobileNetV2-UNet",
+  "dataset": "RSNA Pneumonia Detection Challenge",
+  "subset_size": 5000,
+  "val_set_size": 1000,
+  "evaluation_timestamp": "2026-04-17T15:59:46.360933",
+  "metrics": {
+    "dice_coefficient": {
+      "mean": 0.6233,
+      "std": 0.0899,
+      "interpretation": "Overlap between predicted and true mask"
+    },
+    "mean_iou": {
+      "mean": 0.5609,
+      "std": 0.0891,
+      "interpretation": "Jaccard Index \u2014 stricter than Dice"
+    },
+    "pixel_accuracy": {
+      "mean": 0.9516,
+      "std": 0.0124,
+      "interpretation": "Fraction of correctly classified pixels"
+    }
+  },
+  "pixel_confusion_matrix": {
+    "TP": 1877160,
+    "TN": 45872855,
+    "FP": 1263999,
+    "FN": 1161986
+  },
+  "loss_function": "Dice-BCE Hybrid Loss",
+  "optimizer": "Adam (lr=1e-4 \u2192 1e-5)",
+  "scheduler": "ReduceLROnPlateau (patience=5, factor=0.5)",
+  "architecture": "MobileNetV2 Encoder + Custom U-Net Decoder with skip connections",
+  "training_config": {
+    "rsna_root": "C:\\Users\\Vivek Singh Chauhan\\Desktop\\shubham\\FedMedSeg\\data\\rsna_pneumonia",
+    "train_csv": "C:\\Users\\Vivek Singh Chauhan\\Desktop\\shubham\\FedMedSeg\\data\\rsna_pneumonia\\subset\\train_subset.csv",
+    "val_csv": "C:\\Users\\Vivek Singh Chauhan\\Desktop\\shubham\\FedMedSeg\\data\\rsna_pneumonia\\subset\\val_subset.csv",
+    "results_dir": "C:\\Users\\Vivek Singh Chauhan\\Desktop\\shubham\\FedMedSeg\\results\\model3c_final",
+    "checkpoint_best": "C:\\Users\\Vivek Singh Chauhan\\Desktop\\shubham\\FedMedSeg\\results\\model3c_final\\model3c_best.pth",
+    "checkpoint_last": "C:\\Users\\Vivek Singh Chauhan\\Desktop\\shubham\\FedMedSeg\\results\\model3c_final\\model3c_last.pth",
+    "max_epochs": 100,
+    "phase_b_start": 15,
+    "lr_phase_a": 0.0001,
+    "lr_phase_b": 1e-05,
+    "weight_decay": 1e-05,
+    "grad_clip": 1.0,
+    "sched_factor": 0.5,
+    "sched_patience": 7,
+    "early_stop_patience": 15,
+    "batch_size": 16,
+    "num_workers": 0,
+    "threshold": 0.5,
+    "random_seed": 42,
+    "started_at": "2026-04-17T12:27:16.849212",
+    "device": "cuda"
+  }
+}

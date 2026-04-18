@@ -13,8 +13,8 @@ __pycache__/
 venv/
 env/
 
-# Model weights (large files)
-*.pth
+# Model weights (large files - now tracked)
+# *.pth
 
 # Results (generated outputs)
 results/*
