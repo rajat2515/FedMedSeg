@@ -10,3 +10,4 @@ torchmetrics
 torchsummary
 torchvision
 tqdm
+flwr[simulation]

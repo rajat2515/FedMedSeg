@@ -293,5 +293,182 @@ All outputs are saved to `results/segmentation/`:
 
 ---
 
-*Last Updated: 2026-04-16*
-*Phase: 2 — Semantic Segmentation*
+## 11. Non-IID Data Partitioning (Phase 3)
+
+### What is Non-IID?
+In real hospitals, each institution sees a **different mix of patients**. A specialist centre sees many sick patients; a small clinic sees mostly healthy ones. This means the data at each hospital is **Non-Independent and Identically Distributed (Non-IID)** — it does NOT look like the overall population.
+
+### Our Simulation Strategy
+We split the 4,000 training images into 2 clients with **label skew**:
+
+| Client | Role | Pneumonia | Normal | Total | Skew |
+|--------|------|-----------|--------|-------|------|
+| **Client A** | Specialist Hospital | 1,500 (75%) | 500 (25%) | 2,000 | Heavy Pneumonia |
+| **Client B** | General Clinic | 500 (25%) | 1,500 (75%) | 2,000 | Heavy Normal |
+
+### Why This Matters
+- If data were IID (same distribution at both hospitals), federation is trivial.
+- Non-IID is the **hard problem** — and solving it is the scientific contribution.
+- The validation set stays **global** (shared) for fair comparison.
+
+---
+
+## 12. Federated Averaging — FedAvg (McMahan et al., 2017)
+
+### The Core Idea
+Instead of sending patient data to a central server (privacy violation!), each hospital:
+1. **Receives** a copy of the global model
+2. **Trains** the model on its own local data
+3. **Sends back** only the updated model weights (NOT the data)
+4. The server **averages** the weights to create an improved global model
+
+### Algorithm (Pseudocode)
+
+```
+Initialize global model w₀
+
+For each round r = 1, 2, ..., R:
+    Server sends w_r to ALL clients
+
+    For each client k in parallel:
+        w_k ← LocalTrain(w_r, local_data_k, E epochs)
+
+    Server aggregates:
+        w_{r+1} = Σ (n_k / n_total) × w_k
+
+    where:
+        n_k     = training samples on client k
+        n_total = total samples across all clients
+```
+
+### Aggregation Formula
+
+$$
+w_{r+1} = \sum_{k=1}^{K} \frac{n_k}{n_{\text{total}}} \cdot w_k^{r}
+$$
+
+This is a **weighted average** — clients with more data have more influence.
+
+### Our Configuration
+- **Clients:** 2 (Client A + Client B)
+- **Rounds:** 20 communication rounds
+- **Local Epochs:** 1 epoch per round per client
+- **Framework:** Flower (flwr) — the leading open-source FL framework
+
+---
+
+## 13. FedProx — Proximal Federated Learning (Li et al., 2020)
+
+### The Problem with FedAvg on Non-IID Data
+When client data is very different (Non-IID), each client's local updates pull the global model in **conflicting directions**. This is called **client drift**:
+- Client A (75% pneumonia) pushes the model to detect more infections
+- Client B (75% normal) pushes the model to predict healthy
+- The averaged model oscillates and converges slowly
+
+### FedProx's Solution: The Proximal Term
+FedProx modifies the **client-side loss function** by adding a penalty for drifting too far from the global model:
+
+$$
+\mathcal{L}_{\text{prox}}(w_k) = \mathcal{L}_{\text{task}}(w_k) + \frac{\mu}{2} \|w_k - w^{r}\|^2
+$$
+
+Where:
+- $\mathcal{L}_{\text{task}}$ = standard Dice-BCE loss (same as Phase 2)
+- $w_k$ = local model weights being updated
+- $w^{r}$ = global model weights received at the start of round $r$
+- $\mu$ = proximal coefficient (controls regularization strength)
+- $\|w_k - w^{r}\|^2$ = squared L2 distance between local and global weights
+
+### Understanding μ (Mu)
+| μ Value | Effect | Analogy |
+|---------|--------|---------|
+| 0.0 | No regularization (= FedAvg) | Free-for-all meeting |
+| 0.01 | Mild — recommended default | Meeting with a gentle moderator |
+| 0.1 | Strong — local updates are small | Strict moderator |
+| 1.0 | Very strong — barely any local learning | Dictator (ignores local data) |
+
+### Implementation in Code
+```python
+# Inside client's local training loop:
+loss = criterion(preds, masks)           # Standard Dice-BCE loss
+
+# Proximal term: (μ/2) × ||w_local - w_global||²
+proximal_term = 0.0
+for local_param, global_param in zip(model.parameters(), global_params):
+    proximal_term += (local_param - global_param).norm(2) ** 2
+
+loss = loss + (mu / 2.0) * proximal_term  # Combined loss
+loss.backward()                           # PyTorch handles the rest
+```
+
+---
+
+## 14. Federation Experiment Framework
+
+### The Three Experiments
+We run three experiments to tell a complete scientific story:
+
+| # | Experiment | What It Proves |
+|---|-----------|----------------|
+| 1 | **Isolated Training** | Training alone on biased data FAILS |
+| 2 | **FedAvg** | Standard federation RECOVERS performance |
+| 3 | **FedProx** | Proximal term IMPROVES Non-IID robustness |
+
+### Flower Framework Integration
+We use the **Flower** (flwr) framework for federated simulation:
+- `fl.client.NumPyClient` — wraps our PyTorch model for FL communication
+- `fl.simulation.start_simulation()` — simulates multi-client training on one machine
+- `fl.server.strategy.FedAvg` / `FedProx` — configurable aggregation strategies
+
+### Communication Flow Per Round
+```
+Server                          Client A              Client B
+  │                               │                      │
+  ├──── Send global weights ─────►├                      │
+  ├──── Send global weights ──────┼─────────────────────►│
+  │                               │                      │
+  │                     Local train (1 epoch)   Local train (1 epoch)
+  │                     on Non-IID data          on Non-IID data
+  │                               │                      │
+  │◄──── Return updated weights ──┤                      │
+  │◄──── Return updated weights ──┼──────────────────────┤
+  │                               │                      │
+  ├── Aggregate: w_new = Σ(n_k/n) × w_k                 │
+  │                               │                      │
+  └── Evaluate global model on shared validation set ────┘
+```
+
+### File Map (Phase 3)
+
+| File | What It Contains | Key Functions |
+|------|-----------------|---------------|
+| `src/segmentation/partition_data.py` | Non-IID data splitter | `partition_non_iid()` |
+| `src/segmentation/fl_client.py` | Flower client wrapper | `FedMedSegClient`, `train_local()` |
+| `src/segmentation/fl_server.py` | Server strategies | `create_fedavg_strategy()`, `create_fedprox_strategy()` |
+| `run_isolated.py` | Isolated training experiment | `train_client()`, `main()` |
+| `run_fedavg.py` | FedAvg experiment | `create_client_fn()`, `main()` |
+| `run_fedprox.py` | FedProx experiment | `create_client_fn()`, `main()` |
+| `run_federation_comparison.py` | Final comparison plots | `plot_bar_comparison()`, `plot_convergence()` |
+
+---
+
+## 15. Glossary (Phase 3 Additions)
+
+| Term | Meaning |
+|------|---------|
+| **Federated Learning (FL)** | Training a shared model across multiple institutions without sharing raw data |
+| **FedAvg** | Federated Averaging — the baseline FL algorithm that averages model weights |
+| **FedProx** | Extension of FedAvg that adds a proximal penalty to handle Non-IID data |
+| **Non-IID** | Non-Independent and Identically Distributed — data that differs between clients |
+| **Client Drift** | When local updates diverge too much due to data heterogeneity |
+| **Proximal Term** | Regularization penalty: (μ/2) × ||w_local - w_global||² |
+| **Communication Round** | One cycle of: distribute weights → local training → collect weights → aggregate |
+| **Aggregation** | Combining multiple clients' updated weights into one global model |
+| **Flower (flwr)** | Open-source federated learning framework for Python |
+| **NumPyClient** | Flower's client interface — bridges PyTorch models with FL communication |
+| **Label Skew** | A type of Non-IID where different clients have different class proportions |
+
+---
+
+*Last Updated: 2026-04-18*
+*Phase: 3 — Federated Learning*
