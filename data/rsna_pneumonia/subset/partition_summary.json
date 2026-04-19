@@ -1,0 +1,23 @@
+{
+  "created_at": "2026-04-18T12:42:45.938927",
+  "random_seed": 42,
+  "strategy": "Label-skew Non-IID (75/25 split)",
+  "source_csv": "/home/rajat/Documents/Project/FedMedSeg/data/rsna_pneumonia/subset/train_subset.csv",
+  "num_clients": 2,
+  "client_a": {
+    "name": "Specialist Hospital",
+    "total": 2000,
+    "pneumonia": 1500,
+    "normal": 500,
+    "pneumonia_pct": 75.0,
+    "csv_path": "/home/rajat/Documents/Project/FedMedSeg/data/rsna_pneumonia/subset/client_a_train.csv"
+  },
+  "client_b": {
+    "name": "General Clinic",
+    "total": 2000,
+    "pneumonia": 500,
+    "normal": 1500,
+    "pneumonia_pct": 25.0,
+    "csv_path": "/home/rajat/Documents/Project/FedMedSeg/data/rsna_pneumonia/subset/client_b_train.csv"
+  }
+}

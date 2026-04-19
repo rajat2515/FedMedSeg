@@ -1,0 +1,14 @@
+{
+  "created_at": "2026-04-16T17:14:47.703675",
+  "random_seed": 42,
+  "total_images": 5000,
+  "train_images": 4000,
+  "val_images": 1000,
+  "train_pneumonia": 2000,
+  "train_normal": 2000,
+  "val_pneumonia": 500,
+  "val_normal": 500,
+  "train_ratio": 0.8,
+  "source_csv": "/home/rajat/Documents/Project/FedMedSeg/data/rsna_pneumonia/stage_2_train_labels.csv",
+  "output_dir": "/home/rajat/Documents/Project/FedMedSeg/data/rsna_pneumonia/subset"
+}
