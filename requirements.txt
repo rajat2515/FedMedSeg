@@ -11,3 +11,4 @@ torchsummary
 torchvision
 tqdm
 flwr[simulation]
+opacus>=1.3.0

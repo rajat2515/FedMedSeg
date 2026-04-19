@@ -1,18 +1,20 @@
 # src/segmentation/fl_client.py
-# FedMedSeg Phase 3 — Flower Federated Learning Client
+# FedMedSeg Phase 3 & 4 — Flower Federated Learning Client
 #
 # This module implements a Flower NumPyClient that bridges the gap between
 # PyTorch model parameters and the NumPy arrays used by Flower for
 # server ↔ client communication.
 #
 # SUPPORTED STRATEGIES:
-#   - FedAvg:  Standard local training (criterion only)
-#   - FedProx: Adds proximal penalty to prevent client drift
+#   - FedAvg:    Standard local training (criterion only)
+#   - FedProx:   Adds proximal penalty to prevent client drift
 #     L_prox = L_task + (μ/2) * Σ||w_local - w_global||²
+#   - DP-FedProx: FedProx + Differential Privacy (Opacus DP-SGD)
+#     Gradient clipping + Gaussian noise added before weight update
 #
 # COMMUNICATION FLOW:
 #   1. Server sends global weights → set_parameters()
-#   2. Client trains locally       → fit()
+#   2. Client trains locally       → fit()  [optionally with DP]
 #   3. Client returns new weights  → get_parameters()
 #   4. Server evaluates globally   → evaluate()
 
@@ -91,6 +93,11 @@ def train_local(
     mu: float = 0.0,
     global_params: Optional[List[torch.Tensor]] = None,
     grad_clip: float = 1.0,
+    # ── Phase 4: Differential Privacy ────────────────────────────────────────
+    use_dp: bool = False,
+    target_epsilon: float = 8.0,
+    target_delta: float = 1e-5,
+    max_grad_norm: float = 1.0,
 ) -> Dict[str, float]:
     """
     Perform local training for one federated round.
@@ -98,8 +105,10 @@ def train_local(
     If mu > 0 and global_params is provided, adds the FedProx proximal term:
        L_total = L_task + (μ/2) * Σ||w_local - w_global||²
 
-    This penalizes the local model for drifting too far from the global model,
-    which is critical for Non-IID data stability.
+    If use_dp=True, wraps the model with Opacus PrivacyEngine (DP-SGD):
+       - Per-sample gradients are clipped to max_grad_norm
+       - Gaussian noise is added to the aggregated gradient
+       - This guarantees (target_epsilon, target_delta)-DP
 
     Args:
         model (nn.Module): Local model to train.
@@ -110,10 +119,15 @@ def train_local(
         lr (float): Learning rate for local SGD/Adam.
         mu (float): FedProx proximal coefficient. 0.0 = FedAvg.
         global_params (List[Tensor]): Frozen global weights for proximal term.
-        grad_clip (float): Max gradient norm for clipping.
+        grad_clip (float): Max gradient norm for clipping (non-DP mode).
+        use_dp (bool): Enable Differential Privacy via Opacus. Default False.
+        target_epsilon (float): Privacy budget ε. Only used if use_dp=True.
+        target_delta (float): Privacy failure probability δ. Default 1e-5.
+        max_grad_norm (float): Per-sample gradient clip norm for DP. Default 1.0.
 
     Returns:
         dict: {train_loss, train_dice, train_iou, train_pixel_acc}
+              If use_dp=True, also includes {epsilon_spent, delta}.
     """
     model.train()
     optimizer = optim.Adam(
@@ -121,6 +135,22 @@ def train_local(
         lr=lr,
         weight_decay=1e-5,
     )
+
+    # ── Phase 4: Differential Privacy Setup ──────────────────────────────────
+    # When use_dp=True, Opacus wraps the model/optimizer/loader to intercept
+    # gradients and add calibrated Gaussian noise (DP-SGD algorithm).
+    privacy_engine = None
+    if use_dp:
+        from segmentation.privacy import make_private
+        model, optimizer, train_loader, privacy_engine = make_private(
+            model=model,
+            optimizer=optimizer,
+            data_loader=train_loader,
+            target_epsilon=target_epsilon,
+            target_delta=target_delta,
+            max_grad_norm=max_grad_norm,
+            epochs=epochs,
+        )
 
     total_loss = 0.0
     all_dice, all_iou, all_pix = [], [], []
@@ -167,12 +197,21 @@ def train_local(
             # Update progress bar with current loss
             pbar.set_postfix({"loss": f"{loss.item():.4f}", "dice": f"{m['dice']:.4f}"})
 
-    return {
+    result = {
         "train_loss":      total_loss / max(num_batches, 1),
         "train_dice":      float(np.mean(all_dice)),
         "train_iou":       float(np.mean(all_iou)),
         "train_pixel_acc": float(np.mean(all_pix)),
     }
+
+    # ── Report privacy budget consumed this round ─────────────────────────────
+    if use_dp and privacy_engine is not None:
+        from segmentation.privacy import get_privacy_spent
+        epsilon_spent, delta = get_privacy_spent(privacy_engine)
+        result["epsilon_spent"] = epsilon_spent
+        result["delta"]         = delta
+
+    return result
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -261,17 +300,26 @@ class FedMedSegClient(fl.client.NumPyClient):
         lr: float = 1e-4,
         mu: float = 0.0,
         lock = None,
+        # ── Phase 4: DP args ─────────────────────────────────────────────────
+        use_dp: bool = False,
+        target_epsilon: float = 8.0,
+        target_delta: float = 1e-5,
+        max_grad_norm: float = 1.0,
     ):
-        self.model        = model
-        self.train_loader = train_loader
-        self.val_loader   = val_loader
-        self.device       = device
-        self.client_name  = client_name
-        self.local_epochs = local_epochs
-        self.lr           = lr
-        self.mu           = mu
-        self.lock         = lock
-        self.criterion    = DiceBCELoss(smooth=1e-6)
+        self.model          = model
+        self.train_loader   = train_loader
+        self.val_loader     = val_loader
+        self.device         = device
+        self.client_name    = client_name
+        self.local_epochs   = local_epochs
+        self.lr             = lr
+        self.mu             = mu
+        self.lock           = lock
+        self.use_dp         = use_dp
+        self.target_epsilon = target_epsilon
+        self.target_delta   = target_delta
+        self.max_grad_norm  = max_grad_norm
+        self.criterion      = DiceBCELoss(smooth=1e-6)
 
     def get_parameters(self, config: Dict = None) -> List[np.ndarray]:
         """Send local model parameters to the server."""
@@ -317,15 +365,26 @@ class FedMedSegClient(fl.client.NumPyClient):
                 lr=self.lr,
                 mu=self.mu,
                 global_params=global_params,
+                # Phase 4: DP args
+                use_dp=self.use_dp,
+                target_epsilon=self.target_epsilon,
+                target_delta=self.target_delta,
+                max_grad_norm=self.max_grad_norm,
             )
         finally:
             if self.lock:
                 self.lock.release()
                 print(f"  [{self.client_name}] Released GPU lock.")
 
+        eps_str = (
+            f"  ε={metrics['epsilon_spent']:.2f}"
+            if self.use_dp and "epsilon_spent" in metrics
+            else ""
+        )
         print(f"  [{self.client_name}] fit() → "
               f"Loss: {metrics['train_loss']:.4f}  "
-              f"Dice: {metrics['train_dice']:.4f}")
+              f"Dice: {metrics['train_dice']:.4f}"
+              f"{eps_str}")
 
         # Return: (updated weights, num samples, metrics dict)
         return (

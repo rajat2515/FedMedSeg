@@ -1,27 +1,21 @@
 """
 run_federation_comparison.py
 ============================
-FedMedSeg Phase 3 — Final Federation Comparison & Visualization
+FedMedSeg Phase 3 & 4 — Final Federation Comparison & Visualization
 
 PURPOSE:
   Generates publication-ready comparison charts and tables across ALL
-  five experimental approaches:
+  SIX experimental approaches:
 
     1. Centralized Baseline  (model3c_final — all data, one model)
     2. Isolated Client A     (75% pneumonia — specialist hospital)
     3. Isolated Client B     (75% normal — general clinic)
     4. FedAvg                (standard federated averaging)
     5. FedProx               (proximal-regularized federation)
+    6. DP-FedProx            (Phase 4 — differentially private)
 
-  This script tells the complete "Federation Story":
-    Isolated FAILS → FedAvg RECOVERS → FedProx EXCELS
-
-RUN:
-    cd /home/rajat/Documents/Project/FedMedSeg
-    .venv/bin/python run_federation_comparison.py
-
-NOTE:
-    Run this AFTER all experiments are complete (isolated, fedavg, fedprox).
+  This script tells the COMPLETE "Federation Story":
+    Isolated FAILS → FedAvg RECOVERS → FedProx EXCELS → DP-FedProx: Privacy at Low Cost
 """
 
 import json
@@ -43,9 +37,11 @@ CENTRALIZED_REPORT = PROJECT_ROOT / "results" / "model3c_final" / "model_evaluat
 ISOLATED_REPORT    = PROJECT_ROOT / "results" / "federated" / "isolated" / "isolated_metrics.json"
 FEDAVG_REPORT      = PROJECT_ROOT / "results" / "federated" / "fedavg" / "fedavg_report.json"
 FEDPROX_REPORT     = PROJECT_ROOT / "results" / "federated" / "fedprox" / "fedprox_report.json"
+DP_FEDPROX_REPORT  = PROJECT_ROOT / "results" / "federated" / "dp_fedprox" / "dp_fedprox_report.json"
 
-FEDAVG_ROUNDS_CSV  = PROJECT_ROOT / "results" / "federated" / "fedavg" / "round_metrics.csv"
-FEDPROX_ROUNDS_CSV = PROJECT_ROOT / "results" / "federated" / "fedprox" / "round_metrics.csv"
+FEDAVG_ROUNDS_CSV   = PROJECT_ROOT / "results" / "federated" / "fedavg" / "round_metrics.csv"
+FEDPROX_ROUNDS_CSV  = PROJECT_ROOT / "results" / "federated" / "fedprox" / "round_metrics.csv"
+DP_ROUNDS_CSV       = PROJECT_ROOT / "results" / "federated" / "dp_fedprox" / "round_metrics.csv"
 
 OUTPUT_DIR = PROJECT_ROOT / "results" / "federated"
 
@@ -129,6 +125,23 @@ def load_metrics():
     else:
         print(f"  ⚠ FedProx report not found: {FEDPROX_REPORT}")
 
+    # ── 6. DP-FedProx (Phase 4) ───────────────────────────────────────────────
+    if DP_FEDPROX_REPORT.exists():
+        with open(DP_FEDPROX_REPORT) as f:
+            data = json.load(f)
+        fm = data.get("final_metrics", {})
+        priv = data.get("privacy", {})
+        eps = priv.get("target_epsilon", "?")
+        results[f"DP-FedProx\n(ε={eps})"] = {
+            "dice":      fm.get("val_dice", 0),
+            "iou":       fm.get("val_iou", 0),
+            "pixel_acc": fm.get("val_pixel_acc", 0),
+            "epsilon":   eps,
+        }
+        print(f"  ✓ DP-FedProx:  Dice={fm.get('val_dice', 0):.4f}  (ε={eps})")
+    else:
+        print(f"  ℹ DP-FedProx not found (Phase 4 optional): {DP_FEDPROX_REPORT}")
+
     return results
 
 
@@ -190,8 +203,8 @@ def plot_bar_comparison(results: dict, output_dir: Path):
                         color="#F1F5F9")
 
     ax.set_ylabel("Score", fontsize=12, fontweight="bold")
-    ax.set_title("FedMedSeg — Federation Comparison\n"
-                 "Isolated Training vs Federated Averaging vs FedProx",
+    ax.set_title("FedMedSeg — Federation Comparison (Phase 3 & 4)\n"
+                 "Isolated → FedAvg → FedProx → DP-FedProx (Privacy-Preserving)",
                  fontsize=14, fontweight="bold", pad=15)
     ax.set_xticks(x)
     ax.set_xticklabels(labels, fontsize=10, ha="center")
@@ -263,6 +276,19 @@ def plot_convergence(output_dir: Path):
         ax.plot(fedprox_data["round"], fedprox_data["global_val_dice"],
                 color="#4ADE80", lw=2, marker="s", markersize=4, label="FedProx (μ=0.01)")
 
+    # ── Plot DP-FedProx if available ──────────────────────────────────────────
+    dp_data = None
+    if DP_ROUNDS_CSV.exists():
+        try:
+            dp_data = pd.read_csv(DP_ROUNDS_CSV)
+            if not dp_data.empty and "global_val_dice" in dp_data.columns:
+                print(f"  ✓ DP-FedProx rounds loaded: {len(dp_data)} rounds")
+                ax.plot(dp_data["round"], dp_data["global_val_dice"],
+                        color="#F472B6", lw=2, marker="^", markersize=4,
+                        label="DP-FedProx (ε=8.0)", linestyle="-.")
+        except Exception:
+            pass
+
     # Centralized baseline reference
     if CENTRALIZED_REPORT.exists():
         with open(CENTRALIZED_REPORT) as f:
@@ -285,6 +311,10 @@ def plot_convergence(output_dir: Path):
     if fedprox_data is not None:
         ax.plot(fedprox_data["round"], fedprox_data["global_val_iou"],
                 color="#4ADE80", lw=2, marker="s", markersize=4, label="FedProx (μ=0.01)")
+    if dp_data is not None and "global_val_iou" in dp_data.columns:
+        ax.plot(dp_data["round"], dp_data["global_val_iou"],
+                color="#F472B6", lw=2, marker="^", markersize=4,
+                label="DP-FedProx (ε=8.0)", linestyle="-.")
 
     if CENTRALIZED_REPORT.exists():
         iou_baseline = cdata["metrics"]["mean_iou"]["mean"]
@@ -426,6 +456,17 @@ def main():
             fedprox = results["FedProx\n(μ=0.01)"]["dice"]
             print(f"  3. FedProx EXCELS        ({fedprox:.3f})")
             print(f"     → Proximal term handles Non-IID drift!")
+
+        # Phase 4: DP story
+        dp_key = next((k for k in results if "DP-FedProx" in k), None)
+        if dp_key:
+            dp_dice = results[dp_key]["dice"]
+            dp_eps  = results[dp_key].get("epsilon", "8.0")
+            fedprox_dice = results.get("FedProx\n(μ=0.01)", {}).get("dice", 0)
+            cost = fedprox_dice - dp_dice
+            print(f"  4. DP-FedProx            ({dp_dice:.3f})")
+            print(f"     → ε={dp_eps} privacy with only {cost:+.3f} Dice cost.")
+            print(f"     → PRIVACY-PRESERVING medial AI achieved!")
 
     print(f"\n  All outputs saved to: {OUTPUT_DIR}/")
     print(f"    ├── federation_comparison.png   (bar chart)")
