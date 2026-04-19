@@ -133,24 +133,46 @@ def create_client_fn(
     """
     Factory function that Flower's simulation engine calls to create clients.
 
+    IMPORTANT: DataLoaders are built lazily INSIDE client_fn, not pre-created
+    in the main process. This prevents Ray from pickling large dataset objects
+    into every actor, which was causing OOM kills.
+
     Args:
-        client_configs: Mapping from client ID (str) → {train_loader, val_loader, name}
+        client_configs: Mapping from cid → {train_csv, val_csv, name}
         device: Compute device.
         local_epochs: Epochs per round.
         lr: Learning rate.
-
-    Returns:
-        Callable that creates a FedMedSegClient for a given client ID.
     """
     def client_fn(cid: str) -> fl.client.NumPyClient:
         cfg = client_configs[cid]
-        # Each client gets a fresh model — weights will be set by the server
-        model = MobileNetV2UNet(pretrained=True, freeze_encoder=False).to(device)
+
+        # Build DataLoaders here — inside the worker process — not in main.
+        # This means each worker only holds its own single dataset copy.
+        train_ds = RSNAPneumoniaDataset(
+            rsna_root=cfg["rsna_root"],
+            subset_csv=cfg["train_csv"],
+            img_transform=get_train_transform(),
+            augment=True,
+        )
+        val_ds = RSNAPneumoniaDataset(
+            rsna_root=cfg["rsna_root"],
+            subset_csv=cfg["val_csv"],
+            img_transform=get_val_transform(),
+            augment=False,
+        )
+        train_loader = DataLoader(
+            train_ds, batch_size=cfg["batch_size"], shuffle=True, num_workers=0,
+        )
+        val_loader = DataLoader(
+            val_ds, batch_size=cfg["batch_size"], shuffle=False, num_workers=0,
+        )
+
+        model = MobileNetV2UNet(pretrained=False, freeze_encoder=False).to(device)
 
         return FedMedSegClient(
             model=model,
-            train_loader=cfg["train_loader"],
-            val_loader=cfg["val_loader"],
+            train_loader=train_loader,
+            val_loader=val_loader,
             device=device,
             client_name=cfg["name"],
             local_epochs=local_epochs,
@@ -191,52 +213,29 @@ def main():
     print(f"  Rounds: {num_rounds}  |  Local Epochs: {local_epochs}")
     print("=" * 65)
 
-    # ── Data Loaders ──────────────────────────────────────────────────────────
-    print("\n[Data] Loading client datasets...")
+    # ── Data config: lightweight CSV paths only, DataLoaders built inside client_fn ─
+    # Reason: pre-building DataLoaders here causes Ray to pickle them into every
+    # worker (up to 8 copies × full dataset), which caused the OOM kill.
+    print("\n[Data] Verifying dataset CSVs exist...")
+    for csv_path in [CONFIG["client_a_csv"], CONFIG["client_b_csv"], CONFIG["val_csv"]]:
+        if not Path(csv_path).exists():
+            raise FileNotFoundError(f"CSV not found: {csv_path}")
+        print(f"  ✓ {Path(csv_path).name}")
 
-    train_ds_a = RSNAPneumoniaDataset(
-        rsna_root=CONFIG["rsna_root"],
-        subset_csv=CONFIG["client_a_csv"],
-        img_transform=get_train_transform(),
-        augment=True,
-    )
-    train_ds_b = RSNAPneumoniaDataset(
-        rsna_root=CONFIG["rsna_root"],
-        subset_csv=CONFIG["client_b_csv"],
-        img_transform=get_train_transform(),
-        augment=True,
-    )
-    val_ds = RSNAPneumoniaDataset(
-        rsna_root=CONFIG["rsna_root"],
-        subset_csv=CONFIG["val_csv"],
-        img_transform=get_val_transform(),
-        augment=False,
-    )
-
-    train_loader_a = DataLoader(
-        train_ds_a, batch_size=CONFIG["batch_size"], shuffle=True,
-        num_workers=CONFIG["num_workers"],
-    )
-    train_loader_b = DataLoader(
-        train_ds_b, batch_size=CONFIG["batch_size"], shuffle=True,
-        num_workers=CONFIG["num_workers"],
-    )
-    val_loader = DataLoader(
-        val_ds, batch_size=CONFIG["batch_size"], shuffle=False,
-        num_workers=CONFIG["num_workers"],
-    )
-
-    # ── Client configs for the factory ────────────────────────────────────────
     client_configs = {
         "0": {
-            "train_loader": train_loader_a,
-            "val_loader": val_loader,
-            "name": "Client A (Specialist)",
+            "rsna_root":  CONFIG["rsna_root"],
+            "train_csv":  CONFIG["client_a_csv"],
+            "val_csv":    CONFIG["val_csv"],
+            "batch_size": CONFIG["batch_size"],
+            "name":       "Client A (Specialist)",
         },
         "1": {
-            "train_loader": train_loader_b,
-            "val_loader": val_loader,
-            "name": "Client B (Clinic)",
+            "rsna_root":  CONFIG["rsna_root"],
+            "train_csv":  CONFIG["client_b_csv"],
+            "val_csv":    CONFIG["val_csv"],
+            "batch_size": CONFIG["batch_size"],
+            "name":       "Client B (Clinic)",
         },
     }
 
@@ -282,7 +281,9 @@ def main():
         num_clients=2,
         config=fl.server.ServerConfig(num_rounds=num_rounds),
         strategy=strategy,
-        client_resources={"num_cpus": 1, "num_gpus": 0.0},
+        # num_cpus=4 per client → max 2 parallel actors (8 cores / 4 = 2).
+        # This prevents Ray from spawning 8 actors each cloning the dataset.
+        client_resources={"num_cpus": 4, "num_gpus": 0.0},
         ray_init_args={
             "runtime_env": {
                 "env_vars": {
