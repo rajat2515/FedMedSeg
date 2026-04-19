@@ -1,26 +1,43 @@
-# Data
-data/
+# ── Data ─────────────────────────────────────────────────────────────────────
+data/raw/          # 1.2 GB chest X-ray images — DO NOT track
+data/rsna_pneumonia/*.dcm
+# Allow the small CSV/JSON partition files only
+data/*
+!data/rsna_pneumonia/
+data/rsna_pneumonia/*
+!data/rsna_pneumonia/subset/
 
-# Python
+# ── Model Weights (large binaries — can regenerate from training) ─────────────
+*.pth
+*.pt
+*.ckpt
+*.h5
+*.pkl
+
+# ── Python ────────────────────────────────────────────────────────────────────
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 .ipynb_checkpoints/
 
-# Virtual environments
+# ── Virtual environments ──────────────────────────────────────────────────────
 .venv/
 venv/
 env/
 
-# Model weights (large files - now tracked)
-# *.pth
-
-# Results (generated outputs)
+# ── Results (generated outputs — keep CSVs/PNGs, skip weights) ───────────────
 results/*
 !results/**/
 !results/**/*.csv
+!results/**/*.json
 !results/**/*.png
+!results/**/*.pdf
 
-# OS
+# ── OS ────────────────────────────────────────────────────────────────────────
 .DS_Store
+Thumbs.db
+
+# ── Logs ─────────────────────────────────────────────────────────────────────
+*.log
+ray_sessions/
