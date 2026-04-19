@@ -334,7 +334,7 @@ def generate_latex_table(results: dict, output_dir: Path):
     ])
 
     tex_path = output_dir / "federation_results_table.tex"
-    with open(tex_path, "w") as f:
+    with open(tex_path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
     print(f"  ✓ LaTeX table saved → {tex_path}")
 
@@ -360,7 +360,7 @@ def generate_summary(results: dict, output_dir: Path):
     summary["best_dice"] = results[best_name]["dice"]
 
     out_path = output_dir / "federation_summary.json"
-    with open(out_path, "w") as f:
+    with open(out_path, "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
     print(f"  ✓ Summary JSON saved → {out_path}")
 

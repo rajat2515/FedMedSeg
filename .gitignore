@@ -22,6 +22,7 @@ __pycache__/
 .venv/
 venv/
 env/
+venv312/
 
 # ── Results (generated outputs — keep CSVs/PNGs, skip weights) ───────────────
 results/*
@@ -38,3 +39,8 @@ Thumbs.db
 # ── Logs ─────────────────────────────────────────────────────────────────────
 *.log
 ray_sessions/
+
+# ── Environment Variables ────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example

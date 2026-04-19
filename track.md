@@ -355,6 +355,13 @@ This is a **weighted average** — clients with more data have more influence.
 - **Local Epochs:** 1 epoch per round per client
 - **Framework:** Flower (flwr) — the leading open-source FL framework
 
+### Why Use Low Local Epochs? (The Danger of Client Drift)
+In traditional deep learning, we train for many epochs (e.g., 20, 50, 100) to ensure the model fully learns the dataset. In **Federated Learning**, training for many local epochs *before* aggregating is actually **harmful**. 
+
+If Client A (75% pneumonia) trains for 10 epochs locally without talking to the server, its model will drastically overfit to the heavy pneumonia bias. It will effectively "forget" the global knowledge about healthy patients. This is known as **Client Drift**.
+
+By keeping the local epochs very low (e.g., **1 or 2 epochs**), the clients take a small, safe step in the direction of their local data, and then immediately sync with the server. This frequent synchronization keeps all hospitals tethered to the global objective and prevents them from wandering off track.
+
 ---
 
 ## 13. FedProx — Proximal Federated Learning (Li et al., 2020)

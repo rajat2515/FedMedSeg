@@ -1,0 +1,32 @@
+{
+  "title": "FedMedSeg \u2014 Federation Comparison Summary",
+  "approaches": {
+    "Centralized (Baseline)": {
+      "dice": 0.6233,
+      "iou": 0.5609,
+      "pixel_acc": 0.9516
+    },
+    "Isolated A (75% Pneumonia)": {
+      "dice": 0.6056814576898303,
+      "iou": 0.5421806767819419,
+      "pixel_acc": 0.9448972732301743
+    },
+    "Isolated B (75% Normal)": {
+      "dice": 0.6479995449384054,
+      "iou": 0.5959150431648134,
+      "pixel_acc": 0.9504706150009519
+    },
+    "FedAvg": {
+      "dice": 0.6334325519819108,
+      "iou": 0.5764109449727195,
+      "pixel_acc": 0.9519587036163087
+    },
+    "FedProx (\u03bc=0.01)": {
+      "dice": 0.6448911627133688,
+      "iou": 0.5856006675296359,
+      "pixel_acc": 0.9540634249883985
+    }
+  },
+  "best_approach": "Isolated B (75% Normal)",
+  "best_dice": 0.6479995449384054
+}

@@ -23,6 +23,7 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
+from tqdm import tqdm
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
@@ -126,7 +127,10 @@ def train_local(
     num_batches = 0
 
     for epoch in range(epochs):
-        for images, masks in train_loader:
+        # Add tqdm progress bar so the user can see training speed
+        pbar = tqdm(train_loader, desc=f"Local Epoch {epoch+1}/{epochs}", leave=False)
+        
+        for images, masks in pbar:
             images = images.to(device)
             masks  = masks.to(device)
 
@@ -159,6 +163,9 @@ def train_local(
             all_iou.append(m["iou"])
             all_pix.append(m["pixel_acc"])
             num_batches += 1
+            
+            # Update progress bar with current loss
+            pbar.set_postfix({"loss": f"{loss.item():.4f}", "dice": f"{m['dice']:.4f}"})
 
     return {
         "train_loss":      total_loss / max(num_batches, 1),
@@ -253,6 +260,7 @@ class FedMedSegClient(fl.client.NumPyClient):
         local_epochs: int = 1,
         lr: float = 1e-4,
         mu: float = 0.0,
+        lock = None,
     ):
         self.model        = model
         self.train_loader = train_loader
@@ -262,6 +270,7 @@ class FedMedSegClient(fl.client.NumPyClient):
         self.local_epochs = local_epochs
         self.lr           = lr
         self.mu           = mu
+        self.lock         = lock
         self.criterion    = DiceBCELoss(smooth=1e-6)
 
     def get_parameters(self, config: Dict = None) -> List[np.ndarray]:
@@ -292,17 +301,27 @@ class FedMedSegClient(fl.client.NumPyClient):
                 for param in self.model.parameters()
             ]
 
-        # Step 3: Local training
-        metrics = train_local(
-            model=self.model,
-            train_loader=self.train_loader,
-            criterion=self.criterion,
-            device=self.device,
-            epochs=self.local_epochs,
-            lr=self.lr,
-            mu=self.mu,
-            global_params=global_params,
-        )
+        # Step 3: Local training (Serialized if lock is provided)
+        if self.lock:
+            print(f"  [{self.client_name}] Waiting for GPU access...")
+            self.lock.acquire()
+            print(f"  [{self.client_name}] Acquired GPU lock, starting training.")
+            
+        try:
+            metrics = train_local(
+                model=self.model,
+                train_loader=self.train_loader,
+                criterion=self.criterion,
+                device=self.device,
+                epochs=self.local_epochs,
+                lr=self.lr,
+                mu=self.mu,
+                global_params=global_params,
+            )
+        finally:
+            if self.lock:
+                self.lock.release()
+                print(f"  [{self.client_name}] Released GPU lock.")
 
         print(f"  [{self.client_name}] fit() → "
               f"Loss: {metrics['train_loss']:.4f}  "
@@ -327,12 +346,19 @@ class FedMedSegClient(fl.client.NumPyClient):
         from this client's perspective.
         """
         set_parameters(self.model, parameters)
-        loss, metrics = evaluate_local(
-            model=self.model,
-            val_loader=self.val_loader,
-            criterion=self.criterion,
-            device=self.device,
-        )
+        
+        if self.lock:
+            self.lock.acquire()
+        try:
+            loss, metrics = evaluate_local(
+                model=self.model,
+                val_loader=self.val_loader,
+                criterion=self.criterion,
+                device=self.device,
+            )
+        finally:
+            if self.lock:
+                self.lock.release()
 
         print(f"  [{self.client_name}] evaluate() → "
               f"Val Dice: {metrics['val_dice']:.4f}  "

@@ -13,33 +13,41 @@ ALGORITHM (FedAvg — McMahan et al., 2017):
     1. Server broadcasts global model w_r to all clients
     2. Each client k trains locally for E epochs on its Non-IID data
     3. Each client sends updated weights w_k back to the server
-    4. Server aggregates:  w_{r+1} = Σ (n_k / n_total) × w_k
+    4. Server aggregates:  w_{r+1} = S (n_k / n_total) x w_k
        where n_k = number of training samples on client k
 
   The key insight: DATA NEVER LEAVES THE HOSPITAL.
-  Only model weights are transmitted — preserving patient privacy.
+  Only model weights are transmitted - preserving patient privacy.
 
-RUN:
-    cd /home/rajat/Documents/Project/FedMedSeg
-    .venv/bin/python run_fedavg.py
+ARCHITECTURE (No Ray):
+  Uses Python multiprocessing to simulate federated training on one machine.
+  - Main process  : Flower Server  (listens on 0.0.0.0:8080)
+  - Child process 0: Flower Client A (connects to 127.0.0.1:8080)
+  - Child process 1: Flower Client B (connects to 127.0.0.1:8080)
+  This is identical to running on separate machines - just change the IP.
+
+RUN (Windows):
+    .\\venv312\\Scripts\\python run_fedavg.py
 
 OPTIONAL FLAGS:
-    --device cpu|cuda|mps    (default: auto-detect)
-    --rounds 20              (default: 20)
-    --local-epochs 1         (default: 1)
-    --warm-start             (initialize from model3c_best.pth)
+    --device cpu|cuda    (default: auto-detect)
+    --rounds 20          (default: 20)
+    --local-epochs 1     (default: 1)
+    --warm-start         (initialize from model3c_best.pth)
 """
 
-# ── Standard Library ──────────────────────────────────────────────────────────
+# -- Standard Library ----------------------------------------------------------
 import argparse
 import csv
 import json
+import multiprocessing as mp
+import os
 import sys
 import time
 from datetime import datetime
 from pathlib import Path
 
-# ── Third-Party ───────────────────────────────────────────────────────────────
+# -- Third-Party ---------------------------------------------------------------
 import matplotlib
 matplotlib.use("Agg")
 import numpy as np
@@ -49,11 +57,10 @@ from torch.utils.data import DataLoader
 
 import flwr as fl
 
-# ── Project Imports ───────────────────────────────────────────────────────────
-import os
+# -- Project Imports -----------------------------------------------------------
 PROJECT_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
-os.environ["PYTHONPATH"] = str(PROJECT_ROOT / "src") + ":" + os.environ.get("PYTHONPATH", "")
+os.environ["PYTHONPATH"] = str(PROJECT_ROOT / "src") + os.pathsep + os.environ.get("PYTHONPATH", "")
 
 from segmentation.model_unet import MobileNetV2UNet
 from segmentation.loss import DiceBCELoss
@@ -66,9 +73,9 @@ from segmentation.fl_client import (
 from segmentation.fl_server import create_fedavg_strategy
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# =============================================================================
 #  CONFIGURATION
-# ═══════════════════════════════════════════════════════════════════════════════
+# =============================================================================
 
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD  = [0.229, 0.224, 0.225]
@@ -111,86 +118,85 @@ def get_val_transform():
 def get_device(preference: str = "auto") -> torch.device:
     if preference == "cuda" or (preference == "auto" and torch.cuda.is_available()):
         return torch.device("cuda")
-    elif preference == "mps" or (
-        preference == "auto"
-        and hasattr(torch.backends, "mps")
-        and torch.backends.mps.is_available()
-    ):
-        return torch.device("mps")
     return torch.device("cpu")
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-#  CLIENT FACTORY — Creates Flower Clients for Simulation
-# ═══════════════════════════════════════════════════════════════════════════════
+# =============================================================================
+#  MULTIPROCESSING CLIENT RUNNER
+#  IMPORTANT: This function must be defined at the TOP LEVEL of the module
+#  (not inside main()) so that Python's multiprocessing 'spawn' method on
+#  Windows can pickle and import it correctly.
+# =============================================================================
 
-def create_client_fn(
-    client_configs: dict,
-    device: torch.device,
-    local_epochs: int,
-    lr: float,
-):
+def run_client(cid: str, client_configs: dict, device_str: str, local_epochs: int, lr: float, lock):
     """
-    Factory function that Flower's simulation engine calls to create clients.
-
-    IMPORTANT: DataLoaders are built lazily INSIDE client_fn, not pre-created
-    in the main process. This prevents Ray from pickling large dataset objects
-    into every actor, which was causing OOM kills.
-
-    Args:
-        client_configs: Mapping from cid → {train_csv, val_csv, name}
-        device: Compute device.
-        local_epochs: Epochs per round.
-        lr: Learning rate.
+    Runs a single Flower client in its own child process.
+    Connects to the server at 127.0.0.1:8080 (localhost).
+    On a real multi-machine deployment, change this IP to the server's IP.
     """
-    def client_fn(cid: str) -> fl.client.NumPyClient:
-        cfg = client_configs[cid]
+    # Re-add src to path since child processes start fresh
+    import sys, os
+    from pathlib import Path
+    _root = Path(__file__).resolve().parent
+    sys.path.insert(0, str(_root / "src"))
 
-        # Build DataLoaders here — inside the worker process — not in main.
-        # This means each worker only holds its own single dataset copy.
-        train_ds = RSNAPneumoniaDataset(
-            rsna_root=cfg["rsna_root"],
-            subset_csv=cfg["train_csv"],
-            img_transform=get_train_transform(),
-            augment=True,
-        )
-        val_ds = RSNAPneumoniaDataset(
-            rsna_root=cfg["rsna_root"],
-            subset_csv=cfg["val_csv"],
-            img_transform=get_val_transform(),
-            augment=False,
-        )
-        train_loader = DataLoader(
-            train_ds, batch_size=cfg["batch_size"], shuffle=True, num_workers=0,
-        )
-        val_loader = DataLoader(
-            val_ds, batch_size=cfg["batch_size"], shuffle=False, num_workers=0,
-        )
+    import torch
+    import torchvision.transforms as T
+    from torch.utils.data import DataLoader
+    import flwr as fl
+    from segmentation.model_unet import MobileNetV2UNet
+    from segmentation.dataset_rsna import RSNAPneumoniaDataset
+    from segmentation.fl_client import FedMedSegClient
 
-        model = MobileNetV2UNet(pretrained=False, freeze_encoder=False).to(device)
+    device = torch.device(device_str)
+    cfg = client_configs[cid]
 
-        return FedMedSegClient(
-            model=model,
-            train_loader=train_loader,
-            val_loader=val_loader,
-            device=device,
-            client_name=cfg["name"],
-            local_epochs=local_epochs,
-            lr=lr,
-            mu=0.0,  # FedAvg — no proximal term
-        )
+    train_ds = RSNAPneumoniaDataset(
+        rsna_root=cfg["rsna_root"],
+        subset_csv=cfg["train_csv"],
+        img_transform=get_train_transform(),
+        augment=True,
+    )
+    val_ds = RSNAPneumoniaDataset(
+        rsna_root=cfg["rsna_root"],
+        subset_csv=cfg["val_csv"],
+        img_transform=get_val_transform(),
+        augment=False,
+    )
+    train_loader = DataLoader(
+        train_ds, batch_size=cfg["batch_size"], shuffle=True, num_workers=0,
+    )
+    val_loader = DataLoader(
+        val_ds, batch_size=cfg["batch_size"], shuffle=False, num_workers=0,
+    )
 
-    return client_fn
+    model = MobileNetV2UNet(pretrained=False, freeze_encoder=False).to(device)
+
+    client = FedMedSegClient(
+        model=model,
+        train_loader=train_loader,
+        val_loader=val_loader,
+        device=device,
+        client_name=cfg["name"],
+        local_epochs=local_epochs,
+        lr=lr,
+        mu=0.0,  # FedAvg — no proximal term
+        lock=lock, # Pass the multiprocessing lock to prevent GPU thrashing
+    )
+
+    print(f"  [Client {cid}] {cfg['name']} connecting to server...")
+    fl.client.start_numpy_client(server_address="127.0.0.1:8080", client=client)
+    print(f"  [Client {cid}] {cfg['name']} finished.")
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# =============================================================================
 #  MAIN
-# ═══════════════════════════════════════════════════════════════════════════════
+# =============================================================================
 
 def main():
     parser = argparse.ArgumentParser(description="FedAvg Experiment")
     parser.add_argument("--device", type=str, default="auto",
-                        choices=["auto", "cpu", "cuda", "mps"])
+                        choices=["auto", "cpu", "cuda"])
     parser.add_argument("--rounds", type=int, default=20)
     parser.add_argument("--local-epochs", type=int, default=1)
     parser.add_argument("--warm-start", action="store_true",
@@ -204,23 +210,22 @@ def main():
     results_dir = Path(CONFIG["results_dir"])
     results_dir.mkdir(parents=True, exist_ok=True)
 
-    num_rounds = args.rounds
+    num_rounds   = args.rounds
     local_epochs = args.local_epochs
 
     print("\n" + "=" * 65)
     print("  FEDERATED AVERAGING (FedAvg) EXPERIMENT")
+    print(f"  Device: {device}  |  Rounds: {num_rounds}  |  Local Epochs: {local_epochs}")
     print("  2 hospital clients collaborate by sharing weights, NOT data.")
-    print(f"  Rounds: {num_rounds}  |  Local Epochs: {local_epochs}")
+    print("  Backend: Python multiprocessing (no Ray required)")
     print("=" * 65)
 
-    # ── Data config: lightweight CSV paths only, DataLoaders built inside client_fn ─
-    # Reason: pre-building DataLoaders here causes Ray to pickle them into every
-    # worker (up to 8 copies × full dataset), which caused the OOM kill.
+    # -- Verify CSVs -----------------------------------------------------------
     print("\n[Data] Verifying dataset CSVs exist...")
     for csv_path in [CONFIG["client_a_csv"], CONFIG["client_b_csv"], CONFIG["val_csv"]]:
         if not Path(csv_path).exists():
             raise FileNotFoundError(f"CSV not found: {csv_path}")
-        print(f"  ✓ {Path(csv_path).name}")
+        print(f"  [OK] {Path(csv_path).name}")
 
     client_configs = {
         "0": {
@@ -239,7 +244,7 @@ def main():
         },
     }
 
-    # ── Initial Global Model Parameters ───────────────────────────────────────
+    # -- Initial Global Model --------------------------------------------------
     print("\n[Model] Preparing initial global model...")
     init_model = MobileNetV2UNet(pretrained=True, freeze_encoder=False)
 
@@ -251,18 +256,18 @@ def main():
                 torch.load(ckpt_path, map_location="cpu", weights_only=True)
             )
         else:
-            print(f"  ⚠ Warm start requested but {ckpt_path} not found. Using ImageNet weights.")
+            print(f"  [WARN] Warm start requested but {ckpt_path} not found. Using ImageNet weights.")
 
     initial_parameters = fl.common.ndarrays_to_parameters(get_parameters(init_model))
-    del init_model  # Free memory
+    del init_model
 
-    # ── Flower Strategy ───────────────────────────────────────────────────────
+    # -- Strategy --------------------------------------------------------------
     strategy = create_fedavg_strategy(
         num_clients=2,
         initial_parameters=initial_parameters,
     )
 
-    # ── CSV Logger for Round Metrics ──────────────────────────────────────────
+    # -- CSV Logger ------------------------------------------------------------
     log_path = results_dir / "round_metrics.csv"
     csv_headers = [
         "round", "global_val_dice", "global_val_iou", "global_val_pixel_acc",
@@ -271,46 +276,66 @@ def main():
     with open(log_path, "w", newline="") as f:
         csv.writer(f).writerow(csv_headers)
 
-    # ── Run Flower Simulation ─────────────────────────────────────────────────
-    print(f"\n[FL] Starting FedAvg simulation ({num_rounds} rounds, {len(client_configs)} clients)...\n")
+    # -- Launch Client Processes -----------------------------------------------
+    print(f"\n[FL] Spawning 2 client processes...")
+    processes = []
+    
+    # Create a single lock to share between all clients
+    # This forces them to take turns using the GPU, preventing memory deadlocks!
+    gpu_lock = mp.Lock()
+    
+    for cid in ["0", "1"]:
+        p = mp.Process(
+            target=run_client,
+            args=(cid, client_configs, str(device), local_epochs, CONFIG["lr"], gpu_lock),
+            daemon=True,  # auto-killed if main process crashes
+        )
+        p.start()
+        processes.append(p)
 
+    # Give clients time to load datasets before the server starts accepting
+    print("[FL] Waiting for clients to initialize (5 seconds)...")
+    time.sleep(5)
+
+    # -- Start Flower Server (blocks until all rounds complete) ----------------
+    print(f"[FL] Starting FedAvg server ({num_rounds} rounds, 2 clients)...\n")
     start_time = time.time()
 
-    history = fl.simulation.start_simulation(
-        client_fn=create_client_fn(client_configs, device, local_epochs, CONFIG["lr"]),
-        num_clients=2,
-        config=fl.server.ServerConfig(num_rounds=num_rounds),
-        strategy=strategy,
-        # num_cpus=4 per client → max 2 parallel actors (8 cores / 4 = 2).
-        # This prevents Ray from spawning 8 actors each cloning the dataset.
-        client_resources={"num_cpus": 4, "num_gpus": 0.0},
-        ray_init_args={
-            "runtime_env": {
-                "env_vars": {
-                    "PYTHONPATH": str(PROJECT_ROOT / "src"),
-                }
-            }
-        },
-    )
+    try:
+        history = fl.server.start_server(
+            server_address="0.0.0.0:8080",
+            config=fl.server.ServerConfig(num_rounds=num_rounds),
+            strategy=strategy,
+        )
+    except KeyboardInterrupt:
+        print("\n[FL] Server interrupted by user.")
+        history = None
+    finally:
+        # Clean up client processes regardless of outcome
+        print("\n[FL] Cleaning up client processes...")
+        for p in processes:
+            p.terminate()
+            p.join(timeout=10)
 
     total_time = time.time() - start_time
 
-    # ── Extract & Save Round Metrics ──────────────────────────────────────────
+    if history is None:
+        print("Training was interrupted. No results to save.")
+        return
+
+    # -- Extract & Save Round Metrics ------------------------------------------
     print(f"\n[Results] Extracting metrics from {num_rounds} rounds...")
 
-    # Extract distributed evaluation metrics
     round_metrics = []
     for rnd in range(1, num_rounds + 1):
         metrics_entry = {"round": rnd}
 
-        # Distributed evaluation metrics
         if history.metrics_distributed:
             for key in ["val_dice", "val_iou", "val_pixel_acc"]:
                 for r, val in history.metrics_distributed.get(key, []):
                     if r == rnd:
                         metrics_entry[f"global_{key}"] = val
 
-        # Distributed fit metrics
         if history.metrics_distributed_fit:
             for key in ["train_dice", "train_iou"]:
                 for r, val in history.metrics_distributed_fit.get(key, []):
@@ -319,71 +344,56 @@ def main():
 
         round_metrics.append(metrics_entry)
 
-    # Write to CSV
     with open(log_path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=csv_headers)
         writer.writeheader()
         for entry in round_metrics:
             writer.writerow({
-                "round": entry.get("round", ""),
-                "global_val_dice": f"{entry.get('global_val_dice', 0):.6f}",
-                "global_val_iou": f"{entry.get('global_val_iou', 0):.6f}",
-                "global_val_pixel_acc": f"{entry.get('global_val_pixel_acc', 0):.6f}",
-                "train_dice": f"{entry.get('train_dice', 0):.6f}",
-                "train_iou": f"{entry.get('train_iou', 0):.6f}",
-                "round_time_sec": "",
+                "round":               entry.get("round", ""),
+                "global_val_dice":     f"{entry.get('global_val_dice', 0):.6f}",
+                "global_val_iou":      f"{entry.get('global_val_iou', 0):.6f}",
+                "global_val_pixel_acc":f"{entry.get('global_val_pixel_acc', 0):.6f}",
+                "train_dice":          f"{entry.get('train_dice', 0):.6f}",
+                "train_iou":           f"{entry.get('train_iou', 0):.6f}",
+                "round_time_sec":      "",
             })
 
-    # ── Final Global Model Evaluation ─────────────────────────────────────────
-    print("\n[Eval] Evaluating final global model on validation set...")
-    final_model = MobileNetV2UNet(pretrained=False, freeze_encoder=False).to(device)
+    final_dice = round_metrics[-1].get("global_val_dice", 0) if round_metrics else 0
+    final_iou  = round_metrics[-1].get("global_val_iou",  0) if round_metrics else 0
+    final_pix  = round_metrics[-1].get("global_val_pixel_acc", 0) if round_metrics else 0
 
-    # Get final parameters from history
-    if round_metrics and "global_val_dice" in round_metrics[-1]:
-        final_dice = round_metrics[-1].get("global_val_dice", 0)
-        final_iou  = round_metrics[-1].get("global_val_iou", 0)
-        final_pix  = round_metrics[-1].get("global_val_pixel_acc", 0)
-    else:
-        final_dice, final_iou, final_pix = 0, 0, 0
-
-    # ── Save Report ───────────────────────────────────────────────────────────
+    # -- Save Report -----------------------------------------------------------
     report = {
-        "experiment":    "Federated Averaging (FedAvg)",
-        "algorithm":     "FedAvg — McMahan et al., 2017",
-        "purpose":       "Standard federated learning — clients share weights, not data",
-        "num_rounds":    num_rounds,
-        "num_clients":   2,
-        "local_epochs":  local_epochs,
-        "warm_start":    args.warm_start,
+        "experiment":     "Federated Averaging (FedAvg)",
+        "algorithm":      "FedAvg -- McMahan et al., 2017",
+        "backend":        "Python multiprocessing (no Ray)",
+        "num_rounds":     num_rounds,
+        "num_clients":    2,
+        "local_epochs":   local_epochs,
+        "device":         str(device),
+        "warm_start":     args.warm_start,
         "total_time_sec": round(total_time, 2),
-        "completed_at":  datetime.now().isoformat(),
-        "final_metrics": {
-            "val_dice":      final_dice,
-            "val_iou":       final_iou,
-            "val_pixel_acc": final_pix,
-        },
-        "round_history": round_metrics,
-        "config":        CONFIG,
+        "completed_at":   datetime.now().isoformat(),
+        "final_metrics":  {"val_dice": final_dice, "val_iou": final_iou, "val_pixel_acc": final_pix},
+        "round_history":  round_metrics,
+        "config":         CONFIG,
     }
 
-    report_path = results_dir / "fedavg_report.json"
-    with open(report_path, "w") as f:
+    with open(results_dir / "fedavg_report.json", "w") as f:
         json.dump(report, f, indent=2, default=str)
 
-    # ── Summary ───────────────────────────────────────────────────────────────
+    # -- Summary ---------------------------------------------------------------
     print(f"\n{'='*65}")
     print(f"  FedAvg EXPERIMENT COMPLETE")
+    print(f"  Rounds: {num_rounds}  |  Total Time: {total_time:.1f} sec")
+    print(f"  Final Val Dice:   {final_dice:.4f}")
+    print(f"  Final Val IoU:    {final_iou:.4f}")
+    print(f"  Final Val PixAcc: {final_pix:.4f}")
+    print(f"  Results saved to: {results_dir}/")
     print(f"{'='*65}")
-    print(f"  Rounds:            {num_rounds}")
-    print(f"  Clients:           2")
-    print(f"  Total Time:        {total_time:.1f} sec")
-    print(f"  Final Val Dice:    {final_dice:.4f}")
-    print(f"  Final Val IoU:     {final_iou:.4f}")
-    print(f"  Final Val PixAcc:  {final_pix:.4f}")
-    print(f"\n  Results saved to: {results_dir}/")
-    print(f"    ├── round_metrics.csv")
-    print(f"    └── fedavg_report.json")
 
 
 if __name__ == "__main__":
+    # Required on Windows for multiprocessing 'spawn' method
+    mp.freeze_support()
     main()

@@ -1,0 +1,194 @@
+{
+  "experiment": "Federated Averaging (FedAvg)",
+  "algorithm": "FedAvg -- McMahan et al., 2017",
+  "backend": "Python multiprocessing (no Ray)",
+  "num_rounds": 20,
+  "num_clients": 2,
+  "local_epochs": 1,
+  "device": "cuda",
+  "warm_start": false,
+  "total_time_sec": 3539.7,
+  "completed_at": "2026-04-19T21:13:25.863175",
+  "final_metrics": {
+    "val_dice": 0.6334325519819108,
+    "val_iou": 0.5764109449727195,
+    "val_pixel_acc": 0.9519587036163087
+  },
+  "round_history": [
+    {
+      "round": 1,
+      "global_val_dice": 0.5454211537800138,
+      "global_val_iou": 0.48179948377230813,
+      "global_val_pixel_acc": 0.9414673438147892,
+      "train_dice": 0.2588054189330614,
+      "train_iou": 0.19832605468879405
+    },
+    {
+      "round": 2,
+      "global_val_dice": 0.5947108372809395,
+      "global_val_iou": 0.5313188968196748,
+      "global_val_pixel_acc": 0.9478985137409635,
+      "train_dice": 0.5818436347842216,
+      "train_iou": 0.5153134827017785
+    },
+    {
+      "round": 3,
+      "global_val_dice": 0.6257018915244511,
+      "global_val_iou": 0.5655347298062037,
+      "global_val_pixel_acc": 0.9483176365731254,
+      "train_dice": 0.6085615429878235,
+      "train_iou": 0.5422906905412674
+    },
+    {
+      "round": 4,
+      "global_val_dice": 0.6083759854710291,
+      "global_val_iou": 0.5453478750728425,
+      "global_val_pixel_acc": 0.9443099952879406,
+      "train_dice": 0.6100652657747269,
+      "train_iou": 0.5438282738924026
+    },
+    {
+      "round": 5,
+      "global_val_dice": 0.5787339584221916,
+      "global_val_iou": 0.513167065760446,
+      "global_val_pixel_acc": 0.9457620089016263,
+      "train_dice": 0.6143548845052719,
+      "train_iou": 0.5485558229684829
+    },
+    {
+      "round": 6,
+      "global_val_dice": 0.6328739774605584,
+      "global_val_iou": 0.5736801685794951,
+      "global_val_pixel_acc": 0.9530161571881127,
+      "train_dice": 0.6417376806735993,
+      "train_iou": 0.5772623478174209
+    },
+    {
+      "round": 7,
+      "global_val_dice": 0.6320712027095613,
+      "global_val_iou": 0.571342925230662,
+      "global_val_pixel_acc": 0.9524114188693819,
+      "train_dice": 0.6550107363462448,
+      "train_iou": 0.5902616735696793
+    },
+    {
+      "round": 8,
+      "global_val_dice": 0.6482815013991462,
+      "global_val_iou": 0.5919742404468475,
+      "global_val_pixel_acc": 0.9549124155725751,
+      "train_dice": 0.662334685087204,
+      "train_iou": 0.5985063343644142
+    },
+    {
+      "round": 9,
+      "global_val_dice": 0.6235107254414332,
+      "global_val_iou": 0.5626868104177808,
+      "global_val_pixel_acc": 0.9529559905566867,
+      "train_dice": 0.6572111314982176,
+      "train_iou": 0.5940738305002451
+    },
+    {
+      "round": 10,
+      "global_val_dice": 0.635248947711218,
+      "global_val_iou": 0.5782323824980903,
+      "global_val_pixel_acc": 0.953484192727104,
+      "train_dice": 0.6668709290027618,
+      "train_iou": 0.602486335158348
+    },
+    {
+      "round": 11,
+      "global_val_dice": 0.6423848115262532,
+      "global_val_iou": 0.5847014382718101,
+      "global_val_pixel_acc": 0.9538902820102753,
+      "train_dice": 0.6720364609956742,
+      "train_iou": 0.6087311910390854
+    },
+    {
+      "round": 12,
+      "global_val_dice": 0.6386988645508176,
+      "global_val_iou": 0.5781718747956412,
+      "global_val_pixel_acc": 0.9514202466086735,
+      "train_dice": 0.6818932242393494,
+      "train_iou": 0.6188155617713929
+    },
+    {
+      "round": 13,
+      "global_val_dice": 0.6197379609895131,
+      "global_val_iou": 0.5594634626592908,
+      "global_val_pixel_acc": 0.9516688992106725,
+      "train_dice": 0.6846404308080674,
+      "train_iou": 0.6215898449420929
+    },
+    {
+      "round": 14,
+      "global_val_dice": 0.6332514049514891,
+      "global_val_iou": 0.5754919600865197,
+      "global_val_pixel_acc": 0.951776749557919,
+      "train_dice": 0.6830041569804726,
+      "train_iou": 0.6199493308400688
+    },
+    {
+      "round": 15,
+      "global_val_dice": 0.6368044260002318,
+      "global_val_iou": 0.5801617872147333,
+      "global_val_pixel_acc": 0.9537884593009949,
+      "train_dice": 0.6890763037204742,
+      "train_iou": 0.6254070245027542
+    },
+    {
+      "round": 16,
+      "global_val_dice": 0.631149343081883,
+      "global_val_iou": 0.5732563398187123,
+      "global_val_pixel_acc": 0.9520917884887211,
+      "train_dice": 0.6994153201580048,
+      "train_iou": 0.6367274298667908
+    },
+    {
+      "round": 17,
+      "global_val_dice": 0.6309524254193382,
+      "global_val_iou": 0.5719549012562585,
+      "global_val_pixel_acc": 0.9529098243940444,
+      "train_dice": 0.6926648952960968,
+      "train_iou": 0.6290655937194825
+    },
+    {
+      "round": 18,
+      "global_val_dice": 0.626828385250909,
+      "global_val_iou": 0.5684448367073422,
+      "global_val_pixel_acc": 0.9540751074987744,
+      "train_dice": 0.7186622883081436,
+      "train_iou": 0.6558275896310807
+    },
+    {
+      "round": 19,
+      "global_val_dice": 0.6232617540018899,
+      "global_val_iou": 0.5682547802016849,
+      "global_val_pixel_acc": 0.9522020154529147,
+      "train_dice": 0.7074833094459027,
+      "train_iou": 0.6451651253653691
+    },
+    {
+      "round": 20,
+      "global_val_dice": 0.6334325519819108,
+      "global_val_iou": 0.5764109449727195,
+      "global_val_pixel_acc": 0.9519587036163087,
+      "train_dice": 0.7157287483289838,
+      "train_iou": 0.6533888329491019
+    }
+  ],
+  "config": {
+    "rsna_root": "C:\\Users\\shubh\\Federate learning\\FedMedSeg\\data\\rsna_pneumonia",
+    "client_a_csv": "C:\\Users\\shubh\\Federate learning\\FedMedSeg\\data\\rsna_pneumonia\\subset\\client_a_train.csv",
+    "client_b_csv": "C:\\Users\\shubh\\Federate learning\\FedMedSeg\\data\\rsna_pneumonia\\subset\\client_b_train.csv",
+    "val_csv": "C:\\Users\\shubh\\Federate learning\\FedMedSeg\\data\\rsna_pneumonia\\subset\\val_subset.csv",
+    "results_dir": "C:\\Users\\shubh\\Federate learning\\FedMedSeg\\results\\federated\\fedavg",
+    "warm_start_ckpt": "C:\\Users\\shubh\\Federate learning\\FedMedSeg\\results\\model3c_final\\model3c_best.pth",
+    "num_rounds": 20,
+    "local_epochs": 1,
+    "lr": 0.0001,
+    "batch_size": 16,
+    "num_workers": 0,
+    "threshold": 0.5,
+    "random_seed": 42
+  }
+}

@@ -7,52 +7,41 @@ PURPOSE:
   Demonstrate the FedProx algorithm, which improves upon FedAvg for
   Non-IID (heterogeneous) data distributions.
 
-ALGORITHM (FedProx — Li et al., 2020):
+ALGORITHM (FedProx -- Li et al., 2020):
   Same as FedAvg EXCEPT each client optimizes a MODIFIED loss function:
+    L_prox(w_k) = L_task(w_k) + (mu/2) x ||w_k - w_global||^2
 
-    L_prox(w_k) = L_task(w_k) + (μ/2) × ||w_k − w_global||²
-                    ↑                          ↑
-                 Standard loss            Proximal term
-                 (Dice-BCE)          (prevents client drift)
+  The proximal term prevents client drift on Non-IID data.
 
-  The proximal term penalizes the local model for deviating too far
-  from the global model. This is like a "meeting moderator" that says:
-  "You can learn from your local data, but don't stray too far from
-  the group consensus."
+ARCHITECTURE (No Ray):
+  Uses Python multiprocessing to simulate federated training on one machine.
+  - Main process  : Flower Server  (listens on 0.0.0.0:8080)
+  - Child process 0: Flower Client A (connects to 127.0.0.1:8080)
+  - Child process 1: Flower Client B (connects to 127.0.0.1:8080)
 
-WHY FedProx?
-  In Non-IID settings, FedAvg can suffer from "client drift" where each
-  client's local updates pull the global model in different directions.
-  FedProx's regularization term stabilizes convergence.
-
-  μ (mu) CONTROLS THE TRADE-OFF:
-    μ = 0.0  → FedAvg (no regularization, clients are free to diverge)
-    μ = 0.01 → Mild regularization (recommended starting point)
-    μ = 0.1  → Strong regularization (clients stay very close to global)
-    μ = 1.0  → Very strong (local training barely changes the model)
-
-RUN:
-    cd /home/rajat/Documents/Project/FedMedSeg
-    .venv/bin/python run_fedprox.py
+RUN (Windows):
+    .\\venv312\\Scripts\\python run_fedprox.py
 
 OPTIONAL FLAGS:
-    --device cpu|cuda|mps    (default: auto-detect)
-    --rounds 20              (default: 20)
-    --local-epochs 1         (default: 1)
-    --mu 0.01                (default: 0.01)
-    --warm-start             (initialize from model3c_best.pth)
+    --device cpu|cuda    (default: auto-detect)
+    --rounds 20          (default: 20)
+    --local-epochs 1     (default: 1)
+    --mu 0.01            (default: 0.01)
+    --warm-start         (initialize from model3c_best.pth)
 """
 
-# ── Standard Library ──────────────────────────────────────────────────────────
+# -- Standard Library ----------------------------------------------------------
 import argparse
 import csv
 import json
+import multiprocessing as mp
+import os
 import sys
 import time
 from datetime import datetime
 from pathlib import Path
 
-# ── Third-Party ───────────────────────────────────────────────────────────────
+# -- Third-Party ---------------------------------------------------------------
 import matplotlib
 matplotlib.use("Agg")
 import numpy as np
@@ -62,11 +51,10 @@ from torch.utils.data import DataLoader
 
 import flwr as fl
 
-# ── Project Imports ───────────────────────────────────────────────────────────
-import os
+# -- Project Imports -----------------------------------------------------------
 PROJECT_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
-os.environ["PYTHONPATH"] = str(PROJECT_ROOT / "src") + ":" + os.environ.get("PYTHONPATH", "")
+os.environ["PYTHONPATH"] = str(PROJECT_ROOT / "src") + os.pathsep + os.environ.get("PYTHONPATH", "")
 
 from segmentation.model_unet import MobileNetV2UNet
 from segmentation.loss import DiceBCELoss
@@ -79,29 +67,29 @@ from segmentation.fl_client import (
 from segmentation.fl_server import create_fedprox_strategy
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# =============================================================================
 #  CONFIGURATION
-# ═══════════════════════════════════════════════════════════════════════════════
+# =============================================================================
 
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD  = [0.229, 0.224, 0.225]
 
 CONFIG = {
-    "rsna_root":      str(PROJECT_ROOT / "data" / "rsna_pneumonia"),
-    "client_a_csv":   str(PROJECT_ROOT / "data" / "rsna_pneumonia" / "subset" / "client_a_train.csv"),
-    "client_b_csv":   str(PROJECT_ROOT / "data" / "rsna_pneumonia" / "subset" / "client_b_train.csv"),
-    "val_csv":        str(PROJECT_ROOT / "data" / "rsna_pneumonia" / "subset" / "val_subset.csv"),
-    "results_dir":    str(PROJECT_ROOT / "results" / "federated" / "fedprox"),
+    "rsna_root":       str(PROJECT_ROOT / "data" / "rsna_pneumonia"),
+    "client_a_csv":    str(PROJECT_ROOT / "data" / "rsna_pneumonia" / "subset" / "client_a_train.csv"),
+    "client_b_csv":    str(PROJECT_ROOT / "data" / "rsna_pneumonia" / "subset" / "client_b_train.csv"),
+    "val_csv":         str(PROJECT_ROOT / "data" / "rsna_pneumonia" / "subset" / "val_subset.csv"),
+    "results_dir":     str(PROJECT_ROOT / "results" / "federated" / "fedprox"),
     "warm_start_ckpt": str(PROJECT_ROOT / "results" / "model3c_final" / "model3c_best.pth"),
 
-    "num_rounds":     20,
-    "local_epochs":   1,
-    "mu":             0.01,    # FedProx proximal coefficient
-    "lr":             1e-4,
-    "batch_size":     16,
-    "num_workers":    0,
-    "threshold":      0.5,
-    "random_seed":    42,
+    "num_rounds":      20,
+    "local_epochs":    1,
+    "mu":              0.01,
+    "lr":              1e-4,
+    "batch_size":      16,
+    "num_workers":     0,
+    "threshold":       0.5,
+    "random_seed":     42,
 }
 
 
@@ -125,80 +113,81 @@ def get_val_transform():
 def get_device(preference: str = "auto") -> torch.device:
     if preference == "cuda" or (preference == "auto" and torch.cuda.is_available()):
         return torch.device("cuda")
-    elif preference == "mps" or (
-        preference == "auto"
-        and hasattr(torch.backends, "mps")
-        and torch.backends.mps.is_available()
-    ):
-        return torch.device("mps")
     return torch.device("cpu")
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-#  CLIENT FACTORY
-# ═══════════════════════════════════════════════════════════════════════════════
+# =============================================================================
+#  MULTIPROCESSING CLIENT RUNNER
+# =============================================================================
 
-def create_client_fn(
-    client_configs: dict,
-    device: torch.device,
-    local_epochs: int,
-    lr: float,
-    mu: float,
-):
+def run_client(cid: str, client_configs: dict, device_str: str, local_epochs: int, lr: float, mu: float, lock):
     """
-    Factory function for FedProx clients.
-
-    The KEY DIFFERENCE from FedAvg: mu > 0, which activates the proximal
-    term in the client's local training loss.
+    Runs a single Flower client in its own child process.
+    Connects to the server at 127.0.0.1:8080 (localhost).
     """
-    def client_fn(cid: str) -> fl.client.NumPyClient:
-        cfg = client_configs[cid]
+    # Re-add src to path since child processes start fresh
+    import sys, os
+    from pathlib import Path
+    _root = Path(__file__).resolve().parent
+    sys.path.insert(0, str(_root / "src"))
 
-        # Build DataLoaders inside the worker — prevents Ray from pickling
-        # large dataset objects into every actor (OOM fix).
-        train_ds = RSNAPneumoniaDataset(
-            rsna_root=cfg["rsna_root"],
-            subset_csv=cfg["train_csv"],
-            img_transform=get_train_transform(),
-            augment=True,
-        )
-        val_ds = RSNAPneumoniaDataset(
-            rsna_root=cfg["rsna_root"],
-            subset_csv=cfg["val_csv"],
-            img_transform=get_val_transform(),
-            augment=False,
-        )
-        train_loader = DataLoader(
-            train_ds, batch_size=cfg["batch_size"], shuffle=True, num_workers=0,
-        )
-        val_loader = DataLoader(
-            val_ds, batch_size=cfg["batch_size"], shuffle=False, num_workers=0,
-        )
+    import torch
+    import torchvision.transforms as T
+    from torch.utils.data import DataLoader
+    import flwr as fl
+    from segmentation.model_unet import MobileNetV2UNet
+    from segmentation.dataset_rsna import RSNAPneumoniaDataset
+    from segmentation.fl_client import FedMedSegClient
 
-        model = MobileNetV2UNet(pretrained=False, freeze_encoder=False).to(device)
+    device = torch.device(device_str)
+    cfg = client_configs[cid]
 
-        return FedMedSegClient(
-            model=model,
-            train_loader=train_loader,
-            val_loader=val_loader,
-            device=device,
-            client_name=cfg["name"],
-            local_epochs=local_epochs,
-            lr=lr,
-            mu=mu,
-        )
+    train_ds = RSNAPneumoniaDataset(
+        rsna_root=cfg["rsna_root"],
+        subset_csv=cfg["train_csv"],
+        img_transform=get_train_transform(),
+        augment=True,
+    )
+    val_ds = RSNAPneumoniaDataset(
+        rsna_root=cfg["rsna_root"],
+        subset_csv=cfg["val_csv"],
+        img_transform=get_val_transform(),
+        augment=False,
+    )
+    train_loader = DataLoader(
+        train_ds, batch_size=cfg["batch_size"], shuffle=True, num_workers=0,
+    )
+    val_loader = DataLoader(
+        val_ds, batch_size=cfg["batch_size"], shuffle=False, num_workers=0,
+    )
 
-    return client_fn
+    model = MobileNetV2UNet(pretrained=False, freeze_encoder=False).to(device)
+
+    client = FedMedSegClient(
+        model=model,
+        train_loader=train_loader,
+        val_loader=val_loader,
+        device=device,
+        client_name=cfg["name"],
+        local_epochs=local_epochs,
+        lr=lr,
+        mu=mu,  # FedProx — Proximal term active
+        lock=lock, # Serialize GPU usage
+    )
+
+    print(f"  [Client {cid}] {cfg['name']} connecting to server...")
+    fl.client.start_numpy_client(server_address="127.0.0.1:8080", client=client)
+    print(f"  [Client {cid}] {cfg['name']} finished.")
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# =============================================================================
 #  MAIN
-# ═══════════════════════════════════════════════════════════════════════════════
+# =============================================================================
 
 def main():
     parser = argparse.ArgumentParser(description="FedProx Experiment")
     parser.add_argument("--device", type=str, default="auto",
-                        choices=["auto", "cpu", "cuda", "mps"])
+                        choices=["auto", "cpu", "cuda"])
     parser.add_argument("--rounds", type=int, default=20)
     parser.add_argument("--local-epochs", type=int, default=1)
     parser.add_argument("--mu", type=float, default=0.01,
@@ -219,18 +208,18 @@ def main():
     mu           = args.mu
 
     print("\n" + "=" * 65)
-    print("  FedProx EXPERIMENT — Advanced Federated Learning")
-    print(f"  Proximal coefficient μ = {mu}")
-    print(f"  This prevents client drift on Non-IID data.")
-    print(f"  Rounds: {num_rounds}  |  Local Epochs: {local_epochs}")
+    print("  FedProx EXPERIMENT -- Advanced Federated Learning")
+    print(f"  Proximal coefficient mu = {mu}")
+    print(f"  Device: {device}  |  Rounds: {num_rounds}  |  Local Epochs: {local_epochs}")
+    print("  Backend: Python multiprocessing (no Ray required)")
     print("=" * 65)
 
-    # ── Data config: lightweight CSV paths only (DataLoaders built inside client_fn) ─
+    # -- Verify CSVs -----------------------------------------------------------
     print("\n[Data] Verifying dataset CSVs exist...")
     for csv_path in [CONFIG["client_a_csv"], CONFIG["client_b_csv"], CONFIG["val_csv"]]:
         if not Path(csv_path).exists():
             raise FileNotFoundError(f"CSV not found: {csv_path}")
-        print(f"  \u2713 {Path(csv_path).name}")
+        print(f"  [OK] {Path(csv_path).name}")
 
     client_configs = {
         "0": {
@@ -249,7 +238,7 @@ def main():
         },
     }
 
-    # ── Initial Global Model ──────────────────────────────────────────────────
+    # -- Initial Global Model --------------------------------------------------
     print("\n[Model] Preparing initial global model...")
     init_model = MobileNetV2UNet(pretrained=True, freeze_encoder=False)
 
@@ -261,19 +250,19 @@ def main():
                 torch.load(ckpt_path, map_location="cpu", weights_only=True)
             )
         else:
-            print(f"  ⚠ Warm start requested but {ckpt_path} not found. Using ImageNet weights.")
+            print(f"  [WARN] Warm start requested but {ckpt_path} not found. Using ImageNet weights.")
 
     initial_parameters = fl.common.ndarrays_to_parameters(get_parameters(init_model))
     del init_model
 
-    # ── Flower Strategy (FedProx) ─────────────────────────────────────────────
+    # -- Strategy (FedProx) ----------------------------------------------------
     strategy = create_fedprox_strategy(
         proximal_mu=mu,
         num_clients=2,
         initial_parameters=initial_parameters,
     )
 
-    # ── CSV Logger ────────────────────────────────────────────────────────────
+    # -- CSV Logger ------------------------------------------------------------
     log_path = results_dir / "round_metrics.csv"
     csv_headers = [
         "round", "global_val_dice", "global_val_iou", "global_val_pixel_acc",
@@ -282,31 +271,49 @@ def main():
     with open(log_path, "w", newline="") as f:
         csv.writer(f).writerow(csv_headers)
 
-    # ── Run Flower Simulation ─────────────────────────────────────────────────
-    print(f"\n[FL] Starting FedProx simulation (μ={mu}, {num_rounds} rounds, "
-          f"{len(client_configs)} clients)...\n")
+    # -- Launch Client Processes -----------------------------------------------
+    print(f"\n[FL] Spawning 2 client processes...")
+    processes = []
+    gpu_lock = mp.Lock()
+    
+    for cid in ["0", "1"]:
+        p = mp.Process(
+            target=run_client,
+            args=(cid, client_configs, str(device), local_epochs, CONFIG["lr"], mu, gpu_lock),
+            daemon=True,
+        )
+        p.start()
+        processes.append(p)
 
+    print("[FL] Waiting for clients to initialize (5 seconds)...")
+    time.sleep(5)
+
+    # -- Start Flower Server ---------------------------------------------------
+    print(f"[FL] Starting FedProx server (mu={mu}, {num_rounds} rounds, 2 clients)...\n")
     start_time = time.time()
 
-    history = fl.simulation.start_simulation(
-        client_fn=create_client_fn(client_configs, device, local_epochs, CONFIG["lr"], mu),
-        num_clients=2,
-        config=fl.server.ServerConfig(num_rounds=num_rounds),
-        strategy=strategy,
-        # num_cpus=4 → max 2 parallel actors (8 cores / 4 = 2), prevents OOM
-        client_resources={"num_cpus": 4, "num_gpus": 0.0},
-        ray_init_args={
-            "runtime_env": {
-                "env_vars": {
-                    "PYTHONPATH": str(PROJECT_ROOT / "src"),
-                }
-            }
-        },
-    )
+    try:
+        history = fl.server.start_server(
+            server_address="0.0.0.0:8080",
+            config=fl.server.ServerConfig(num_rounds=num_rounds),
+            strategy=strategy,
+        )
+    except KeyboardInterrupt:
+        print("\n[FL] Server interrupted by user.")
+        history = None
+    finally:
+        print("\n[FL] Cleaning up client processes...")
+        for p in processes:
+            p.terminate()
+            p.join(timeout=10)
 
     total_time = time.time() - start_time
 
-    # ── Extract & Save Round Metrics ──────────────────────────────────────────
+    if history is None:
+        print("Training was interrupted. No results to save.")
+        return
+
+    # -- Extract & Save Round Metrics ------------------------------------------
     print(f"\n[Results] Extracting metrics from {num_rounds} rounds...")
 
     round_metrics = []
@@ -327,68 +334,56 @@ def main():
 
         round_metrics.append(metrics_entry)
 
-    # Write to CSV
     with open(log_path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=csv_headers)
         writer.writeheader()
         for entry in round_metrics:
             writer.writerow({
-                "round": entry.get("round", ""),
-                "global_val_dice": f"{entry.get('global_val_dice', 0):.6f}",
-                "global_val_iou": f"{entry.get('global_val_iou', 0):.6f}",
+                "round":                entry.get("round", ""),
+                "global_val_dice":      f"{entry.get('global_val_dice', 0):.6f}",
+                "global_val_iou":       f"{entry.get('global_val_iou', 0):.6f}",
                 "global_val_pixel_acc": f"{entry.get('global_val_pixel_acc', 0):.6f}",
-                "train_dice": f"{entry.get('train_dice', 0):.6f}",
-                "train_iou": f"{entry.get('train_iou', 0):.6f}",
-                "round_time_sec": "",
+                "train_dice":           f"{entry.get('train_dice', 0):.6f}",
+                "train_iou":            f"{entry.get('train_iou', 0):.6f}",
+                "round_time_sec":       "",
             })
 
-    # Final metrics
-    if round_metrics and "global_val_dice" in round_metrics[-1]:
-        final_dice = round_metrics[-1].get("global_val_dice", 0)
-        final_iou  = round_metrics[-1].get("global_val_iou", 0)
-        final_pix  = round_metrics[-1].get("global_val_pixel_acc", 0)
-    else:
-        final_dice, final_iou, final_pix = 0, 0, 0
+    final_dice = round_metrics[-1].get("global_val_dice", 0) if round_metrics else 0
+    final_iou  = round_metrics[-1].get("global_val_iou",  0) if round_metrics else 0
+    final_pix  = round_metrics[-1].get("global_val_pixel_acc", 0) if round_metrics else 0
 
-    # ── Save Report ───────────────────────────────────────────────────────────
+    # -- Save Report -----------------------------------------------------------
     report = {
-        "experiment":    "FedProx — Proximal Federated Learning",
-        "algorithm":     "FedProx — Li et al., 2020",
-        "purpose":       "Advanced FL with proximal term for Non-IID robustness",
-        "proximal_mu":   mu,
-        "num_rounds":    num_rounds,
-        "num_clients":   2,
-        "local_epochs":  local_epochs,
-        "warm_start":    args.warm_start,
+        "experiment":     "FedProx -- Proximal Federated Learning",
+        "algorithm":      "FedProx -- Li et al., 2020",
+        "backend":        "Python multiprocessing (no Ray)",
+        "proximal_mu":    mu,
+        "num_rounds":     num_rounds,
+        "num_clients":    2,
+        "local_epochs":   local_epochs,
+        "device":         str(device),
+        "warm_start":     args.warm_start,
         "total_time_sec": round(total_time, 2),
-        "completed_at":  datetime.now().isoformat(),
-        "final_metrics": {
-            "val_dice":      final_dice,
-            "val_iou":       final_iou,
-            "val_pixel_acc": final_pix,
-        },
-        "round_history": round_metrics,
-        "config":        CONFIG,
+        "completed_at":   datetime.now().isoformat(),
+        "final_metrics":  {"val_dice": final_dice, "val_iou": final_iou, "val_pixel_acc": final_pix},
+        "round_history":  round_metrics,
+        "config":         CONFIG,
     }
 
-    report_path = results_dir / "fedprox_report.json"
-    with open(report_path, "w") as f:
+    with open(results_dir / "fedprox_report.json", "w") as f:
         json.dump(report, f, indent=2, default=str)
 
-    # ── Summary ───────────────────────────────────────────────────────────────
+    # -- Summary ---------------------------------------------------------------
     print(f"\n{'='*65}")
-    print(f"  FedProx EXPERIMENT COMPLETE (μ = {mu})")
+    print(f"  FedProx EXPERIMENT COMPLETE (mu = {mu})")
+    print(f"  Rounds: {num_rounds}  |  Total Time: {total_time:.1f} sec")
+    print(f"  Final Val Dice:   {final_dice:.4f}")
+    print(f"  Final Val IoU:    {final_iou:.4f}")
+    print(f"  Final Val PixAcc: {final_pix:.4f}")
+    print(f"  Results saved to: {results_dir}/")
     print(f"{'='*65}")
-    print(f"  Rounds:            {num_rounds}")
-    print(f"  Proximal μ:        {mu}")
-    print(f"  Total Time:        {total_time:.1f} sec")
-    print(f"  Final Val Dice:    {final_dice:.4f}")
-    print(f"  Final Val IoU:     {final_iou:.4f}")
-    print(f"  Final Val PixAcc:  {final_pix:.4f}")
-    print(f"\n  Results saved to: {results_dir}/")
-    print(f"    ├── round_metrics.csv")
-    print(f"    └── fedprox_report.json")
 
 
 if __name__ == "__main__":
+    mp.freeze_support()
     main()

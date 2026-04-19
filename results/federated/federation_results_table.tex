@@ -1,0 +1,16 @@
+\begin{table}[h]
+\centering
+\caption{FedMedSeg — Federation Experiment Results}
+\label{tab:federation_results}
+\begin{tabular}{l c c c}
+\hline
+\textbf{Approach} & \textbf{Dice} & \textbf{IoU} & \textbf{Pixel Acc.} \\
+\hline
+  Centralized (Baseline) & 0.6233 & 0.5609 & 0.9516 \\
+  Isolated A (75% Pneumonia) & 0.6057 & 0.5422 & 0.9449 \\
+  Isolated B (75% Normal) & 0.6480 & 0.5959 & 0.9505 \\
+  FedAvg & 0.6334 & 0.5764 & 0.9520 \\
+  FedProx (μ=0.01) & 0.6449 & 0.5856 & 0.9541 \\
+\hline
+\end{tabular}
+\end{table}
