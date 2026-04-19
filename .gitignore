@@ -7,12 +7,9 @@ data/*
 data/rsna_pneumonia/*
 !data/rsna_pneumonia/subset/
 
-# ── Model Weights (large binaries — can regenerate from training) ─────────────
-*.pth
-*.pt
-*.ckpt
-*.h5
-*.pkl
+# ── Model Weights (tracked via Git LFS — safe to include) ────────────────────
+# *.pth files are now handled by Git LFS (see .gitattributes)
+# Git LFS stores only a small pointer here; the binary lives on the LFS server
 
 # ── Python ────────────────────────────────────────────────────────────────────
 __pycache__/
