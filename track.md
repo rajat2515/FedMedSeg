@@ -1,4 +1,4 @@
-# 📋 FedMedSeg Phase 2 — Technical Implementation Tracker
+# 📋 FedMedSeg Phase 2–4 — Technical Implementation Tracker
 
 > **Purpose:** This document records **every** method, algorithm, formula, and design decision used in the Phase 2 Semantic Segmentation implementation. It is written so that even if you have never seen the code, you can understand *what* was built, *why*, and *how*.
 
@@ -477,5 +477,74 @@ Server                          Client A              Client B
 
 ---
 
-*Last Updated: 2026-04-18*
-*Phase: 3 — Federated Learning*
+## 16. Differential Privacy — DP-SGD (Abadi et al., 2016) [Phase 4]
+
+### The Privacy Threat in Federated Learning
+Federated Learning prevents *direct* sharing of patient X-rays. However, an attacker who intercepts the **model weights** (gradients) can perform a **Model Inversion Attack** to partially reconstruct the original patient images. Differential Privacy (DP) solves this by mathematically guaranteeing that no individual patient's data can be perfectly reverse-engineered.
+
+### DP-SGD (Differentially Private Stochastic Gradient Descent)
+Standard training computes gradients and updates weights. DP-SGD intercepts these gradients and modifies them in two steps:
+
+**Step 1. Gradient Clipping (Bounding Sensitivity)**
+We must limit how much *any single patient's X-ray* can affect the model. We clip the $L_2$ norm of each per-sample gradient $g_i$ to a maximum threshold $C$ (`max_grad_norm`):
+
+$$
+\bar{g}_i = g_i \cdot \min\left(1, \frac{C}{\|g_i\|_2}\right)
+$$
+
+**Step 2. Noise Addition (Masking)**
+After clipping and averaging the gradients across the batch (size $B$), we add random Gaussian noise scaled by the clipping norm $C$ and a noise multiplier $\sigma$:
+
+$$
+\tilde{g} = \frac{1}{B} \left( \sum_{i=1}^B \bar{g}_i + \mathcal{N}(0, \sigma^2 C^2 \mathbf{I}) \right)
+$$
+
+The final weight update becomes: $\theta_{t+1} = \theta_t - \eta \tilde{g}$
+
+### The Privacy Budget: ($\epsilon, \delta$)
+- **$\epsilon$ (Epsilon):** The privacy budget. Lower is more private, but less accurate.
+  - $\epsilon = 1.0$: Extreme privacy (high noise, large accuracy drop).
+  - **$\epsilon = 8.0$: Healthcare industry standard (moderate noise, minimal accuracy drop). We use 8.0.**
+- **$\delta$ (Delta):** The probability that the privacy guarantee fails. Set to $10^{-5}$ (must be `< 1/N`).
+
+### Implementation (Opacus)
+We use Facebook's **Opacus** library, which hooks into PyTorch's autograd engine to perform the clipping and noise injection dynamically. The model, optimizer, and data loader are wrapped in an `Opacus PrivacyEngine`.
+
+---
+
+## 17. Model Quantization [Phase 4]
+
+### The Efficiency Problem
+Our MobileNetV2-UNet has ~3.2 million parameters. As standard 32-bit floats (`float32`), this takes **12.8 MB** per client per round.
+- 2 clients × 20 rounds = 512 MB of total bandwidth used.
+For resource-constrained clinics with slow internet, this is a bottleneck.
+
+### Post-Training Dynamic Quantization (PTDQ)
+We compress the model weights from 32-bit floats down to **8-bit integers (`int8`)** right before transmitting them over the network.
+
+- **Post-Training**: No need to retrain the model.
+- **Dynamic**: Ony `Linear` (Dense bottleneck) layers are quantized. Activations remain `float32` during actual computation.
+- **Size Savings**: Reduces the communication payload from ~12.8 MB to **~3.2 MB** (a ~75% reduction in bandwidth overhead).
+
+---
+
+## 18. Continuous Learning Pipeline (MLOps) [Phase 5 - Architecture]
+
+### The Static vs. Dynamic Problem
+Currently, the FL system is static — we run it once, and it stops. In reality, hospitals continuously acquire new X-rays. 
+
+### The 24-Hour Cycle Architecture
+We use a background scheduler (`APScheduler`) to automate retraining without human intervention.
+
+1. **The Scheduler** wakes up daily at 2:00 AM.
+2. **The Data Watcher** scans the data directories to count files.
+   - If `current_count > previous_count`, a retraining trigger fires.
+3. The server starts a new **DP-FedProx** simulation specifically on the newly acquired data, using the best previous model as a _warm start_.
+4. **The Model Registry** evaluates the freshly trained model.
+   - If the new Dice score > the old Dice score: The model is saved as the new `current_best.pth`.
+   - If the new model performs worse (e.g., catastrophic forgetting due to anomalous data): The update is rejected.
+
+---
+
+*Last Updated: 2026-04-20*
+*Phase: 4 — Privacy & Efficiency Integration*
