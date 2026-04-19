@@ -41,6 +41,7 @@ import torch
 import torch.optim as optim
 import torchvision.transforms as T
 from torch.utils.data import DataLoader
+from tqdm import tqdm
 
 # ── Project Imports ───────────────────────────────────────────────────────────
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -115,7 +116,8 @@ def train_one_epoch(model, loader, criterion, optimizer, device):
     total_loss = 0.0
     all_dice, all_iou, all_pix = [], [], []
 
-    for images, masks in loader:
+    pbar = tqdm(loader, desc="  Training", leave=False)
+    for images, masks in pbar:
         images = images.to(device)
         masks  = masks.to(device)
 
@@ -134,6 +136,8 @@ def train_one_epoch(model, loader, criterion, optimizer, device):
         all_iou.append(m["iou"])
         all_pix.append(m["pixel_acc"])
 
+        pbar.set_postfix({"loss": f"{loss.item():.4f}", "dice": f"{m['dice']:.4f}"})
+
     return {
         "train_loss":      total_loss / len(loader),
         "train_dice":      float(np.mean(all_dice)),
@@ -148,7 +152,8 @@ def validate(model, loader, criterion, device):
     all_dice, all_iou, all_pix = [], [], []
 
     with torch.no_grad():
-        for images, masks in loader:
+        pbar = tqdm(loader, desc="  Validation", leave=False)
+        for images, masks in pbar:
             images = images.to(device)
             masks  = masks.to(device)
 
@@ -160,6 +165,8 @@ def validate(model, loader, criterion, device):
             all_dice.append(m["dice"])
             all_iou.append(m["iou"])
             all_pix.append(m["pixel_acc"])
+
+            pbar.set_postfix({"loss": f"{loss.item():.4f}", "dice": f"{m['dice']:.4f}"})
 
     return {
         "val_loss":      total_loss / len(loader),

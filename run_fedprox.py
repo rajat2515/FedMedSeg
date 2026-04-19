@@ -63,8 +63,10 @@ from torch.utils.data import DataLoader
 import flwr as fl
 
 # ── Project Imports ───────────────────────────────────────────────────────────
+import os
 PROJECT_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
+os.environ["PYTHONPATH"] = str(PROJECT_ROOT / "src") + ":" + os.environ.get("PYTHONPATH", "")
 
 from segmentation.model_unet import MobileNetV2UNet
 from segmentation.loss import DiceBCELoss
@@ -295,6 +297,13 @@ def main():
         config=fl.server.ServerConfig(num_rounds=num_rounds),
         strategy=strategy,
         client_resources={"num_cpus": 1, "num_gpus": 0.0},
+        ray_init_args={
+            "runtime_env": {
+                "env_vars": {
+                    "PYTHONPATH": str(PROJECT_ROOT / "src"),
+                }
+            }
+        },
     )
 
     total_time = time.time() - start_time

@@ -1,0 +1,45 @@
+{
+  "experiment": "Isolated Training (No Federation)",
+  "purpose": "Control group \u2014 proves biased local data leads to poor models",
+  "completed_at": "2026-04-18T19:54:17.550387",
+  "device": "cpu",
+  "config": {
+    "rsna_root": "/home/rajat/Documents/Project/FedMedSeg/data/rsna_pneumonia",
+    "client_a_csv": "/home/rajat/Documents/Project/FedMedSeg/data/rsna_pneumonia/subset/client_a_train.csv",
+    "client_b_csv": "/home/rajat/Documents/Project/FedMedSeg/data/rsna_pneumonia/subset/client_b_train.csv",
+    "val_csv": "/home/rajat/Documents/Project/FedMedSeg/data/rsna_pneumonia/subset/val_subset.csv",
+    "results_dir": "/home/rajat/Documents/Project/FedMedSeg/results/federated/isolated",
+    "max_epochs": 15,
+    "lr": 0.0001,
+    "weight_decay": 1e-05,
+    "grad_clip": 1.0,
+    "batch_size": 16,
+    "num_workers": 0,
+    "threshold": 0.5,
+    "random_seed": 42
+  },
+  "client_a": {
+    "client_name": "Client_A",
+    "best_val_dice": 0.6056814576898303,
+    "final_metrics": {
+      "val_loss": 1.6256735892522902,
+      "val_dice": 0.6056814576898303,
+      "val_iou": 0.5421806767819419,
+      "val_pixel_acc": 0.9448972732301743
+    },
+    "epochs": 15,
+    "train_samples": 2000
+  },
+  "client_b": {
+    "client_name": "Client_B",
+    "best_val_dice": 0.6479995449384054,
+    "final_metrics": {
+      "val_loss": 1.6731470179936243,
+      "val_dice": 0.6479995449384054,
+      "val_iou": 0.5959150431648134,
+      "val_pixel_acc": 0.9504706150009519
+    },
+    "epochs": 15,
+    "train_samples": 2000
+  }
+}
