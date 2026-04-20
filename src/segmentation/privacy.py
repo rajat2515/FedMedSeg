@@ -131,12 +131,32 @@ def make_private(
         model = ModuleValidator.fix(model)
         logger.info("  [DP] Model fixed: BatchNorm2d → GroupNorm ✓")
 
+        # CRITICAL: ModuleValidator.fix() returns a NEW model with new parameters.
+        # The optimizer was created with the OLD model's parameters — we must
+        # re-create it or Opacus will see a parameter mismatch and fail with:
+        # "Per sample gradient is not initialized. Not updated in backward pass?"
+        lr = optimizer.param_groups[0]['lr']
+        weight_decay = optimizer.param_groups[0].get('weight_decay', 0)
+        optimizer = type(optimizer)(
+            model.parameters(), lr=lr, weight_decay=weight_decay
+        )
+        logger.info("  [DP] Optimizer re-created to match fixed model ✓")
+
     # ── Step 2: Create PrivacyEngine ─────────────────────────────────────────
     privacy_engine = PrivacyEngine()
 
     # ── Step 3: Attach engine to model, optimizer, and loader ────────────────
     # Opacus computes the noise_multiplier automatically from:
     #   target_epsilon, target_delta, max_grad_norm, epochs, batch_size, dataset_size
+    #
+    # WINDOWS FIX: poisson_sampling=False
+    #   By default, Opacus replaces the DataLoader with a DPDataLoader that
+    #   uses Poisson subsampling. On Windows, this DPDataLoader creates internal
+    #   iterators/threads inside spawned child processes that deadlock — the
+    #   training progress bar freezes at a low % with 0% GPU utilisation.
+    #   Setting poisson_sampling=False keeps the original DataLoader and uses
+    #   a standard fixed-batch sampler instead. Privacy accounting is slightly
+    #   more conservative but negligibly so at ε=8 (healthcare standard).
     private_model, private_optimizer, private_loader = privacy_engine.make_private_with_epsilon(
         module=model,
         optimizer=optimizer,
@@ -145,6 +165,7 @@ def make_private(
         target_delta=target_delta,
         max_grad_norm=max_grad_norm,
         epochs=epochs,
+        poisson_sampling=False,   # Prevent DPDataLoader hang on Windows multiprocessing
     )
 
     noise_mult = private_optimizer.noise_multiplier

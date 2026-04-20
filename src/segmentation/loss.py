@@ -46,8 +46,8 @@ class DiceLoss(nn.Module):
         preds = torch.sigmoid(preds)
 
         # Flatten spatial dimensions for calculation
-        preds_flat   = preds.view(preds.size(0), -1)    # (B, H*W)
-        targets_flat = targets.view(targets.size(0), -1) # (B, H*W)
+        preds_flat   = preds.flatten(start_dim=1)       # (B, H*W)
+        targets_flat = targets.flatten(start_dim=1)     # (B, H*W)
 
         # Soft Dice numerator and denominator per sample in the batch
         intersection = (preds_flat * targets_flat).sum(dim=1)           # (B,)

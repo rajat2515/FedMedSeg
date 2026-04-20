@@ -43,6 +43,53 @@ from segmentation.metrics import compute_all_metrics
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+#  OPACUS COMPATIBILITY HELPERS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def disable_inplace_activations(model: nn.Module) -> nn.Module:
+    """
+    Disable all inplace activation functions in the model.
+
+    MobileNetV2 uses ReLU6 (implemented as Hardtanh) with inplace=True.
+    Opacus's per-sample gradient hooks conflict with inplace operations,
+    causing a RuntimeError during the backward pass.
+    This function walks the entire model and sets inplace=False on all
+    ReLU, ReLU6, and Hardtanh activations.
+    """
+    for module in model.modules():
+        if isinstance(module, (nn.ReLU, nn.ReLU6, nn.Hardtanh)):
+            module.inplace = False
+    return model
+
+
+def prepare_model_for_dp(model: nn.Module) -> nn.Module:
+    """
+    Full Opacus compatibility preparation:
+      1. Replace BatchNorm2d → GroupNorm  (required for per-sample gradients)
+      2. Disable inplace activations       (required for autograd hooks)
+      3. Freeze unused encoder_blocks[18]  (never used in forward pass)
+
+    MobileNetV2 has 19 feature blocks (indices 0–18). Our UNet decoder
+    only uses blocks 0–17. Block 18 (1×1 conv: 320→1280ch) is the
+    classification head pre-expansion and is NEVER called in forward().
+    If its parameters remain trainable, Opacus registers them but
+    backward() never computes their grad_sample → ValueError.
+    """
+    from opacus.validators import ModuleValidator
+    if not ModuleValidator.is_valid(model):
+        model = ModuleValidator.fix(model)
+    model = disable_inplace_activations(model)
+
+    # Freeze encoder_blocks[18] — unused in forward(), causes Opacus to fail
+    # if its trainable params have no grad_sample after backward().
+    if hasattr(model, 'encoder_blocks') and len(model.encoder_blocks) > 18:
+        for param in model.encoder_blocks[18].parameters():
+            param.requires_grad = False
+
+    return model
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 #  PARAMETER HELPERS — PyTorch ↔ NumPy Conversion
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -98,6 +145,8 @@ def train_local(
     target_epsilon: float = 8.0,
     target_delta: float = 1e-5,
     max_grad_norm: float = 1.0,
+    server_round: str = "?",
+    client_name: str = "Client",
 ) -> Dict[str, float]:
     """
     Perform local training for one federated round.
@@ -130,18 +179,31 @@ def train_local(
               If use_dp=True, also includes {epsilon_spent, delta}.
     """
     model.train()
-    optimizer = optim.Adam(
-        filter(lambda p: p.requires_grad, model.parameters()),
-        lr=lr,
-        weight_decay=1e-5,
-    )
 
     # ── Phase 4: Differential Privacy Setup ──────────────────────────────────
     # When use_dp=True, Opacus wraps the model/optimizer/loader to intercept
     # gradients and add calibrated Gaussian noise (DP-SGD algorithm).
+    # IMPORTANT: Opacus requires that the optimizer is created with ALL
+    # trainable parameters (no filtering). The optimizer must be created
+    # BEFORE make_private() so Opacus can wrap it properly.
     privacy_engine = None
     if use_dp:
+        from opacus import GradSampleModule
         from segmentation.privacy import make_private
+
+        # If this model was wrapped by a previous round's PrivacyEngine,
+        # remove its hooks and unwrap it first to avoid double-wrapping errors.
+        # NOTE: simply accessing ._module is NOT enough — the hooks are still
+        # attached to the underlying model's parameters. remove_hooks() is required.
+        if isinstance(model, GradSampleModule):
+            model.remove_hooks()
+            model = model._module
+
+        optimizer = optim.Adam(
+            model.parameters(),  # ALL params — Opacus needs full param list
+            lr=lr,
+            weight_decay=1e-5,
+        )
         model, optimizer, train_loader, privacy_engine = make_private(
             model=model,
             optimizer=optimizer,
@@ -151,6 +213,12 @@ def train_local(
             max_grad_norm=max_grad_norm,
             epochs=epochs,
         )
+    else:
+        optimizer = optim.Adam(
+            filter(lambda p: p.requires_grad, model.parameters()),
+            lr=lr,
+            weight_decay=1e-5,
+        )
 
     total_loss = 0.0
     all_dice, all_iou, all_pix = [], [], []
@@ -158,7 +226,7 @@ def train_local(
 
     for epoch in range(epochs):
         # Add tqdm progress bar so the user can see training speed
-        pbar = tqdm(train_loader, desc=f"Local Epoch {epoch+1}/{epochs}", leave=False)
+        pbar = tqdm(train_loader, desc=f"[{client_name}] Round {server_round} | Epoch {epoch+1}/{epochs}", leave=True)
         
         for images, masks in pbar:
             images = images.to(device)
@@ -170,8 +238,14 @@ def train_local(
 
             # ── FedProx Proximal Term ─────────────────────────────────────
             # Only active when mu > 0 (FedProx mode)
-            # Penalizes local weights for deviating from global weights
-            if mu > 0.0 and global_params is not None:
+            # When use_dp=False: add proximal term to loss before backward()
+            # When use_dp=True:  CANNOT add to loss — Opacus computes per-sample
+            #   gradients via forward-pass hooks, but the proximal term bypasses
+            #   those hooks (it's a direct param→param operation), leaving
+            #   .grad_sample uninitialized → ValueError.
+            #   Fix: run task loss backward first (Opacus hooks fire cleanly),
+            #   then manually add the proximal gradient to .grad afterward.
+            if mu > 0.0 and global_params is not None and not use_dp:
                 proximal_term = 0.0
                 for local_param, global_param in zip(
                     model.parameters(), global_params
@@ -182,7 +256,19 @@ def train_local(
                 loss = loss + (mu / 2.0) * proximal_term
 
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=grad_clip)
+
+            # When DP is on, manually inject proximal gradient AFTER backward()
+            # so Opacus hooks have already fired and .grad_sample is populated.
+            if use_dp and mu > 0.0 and global_params is not None:
+                with torch.no_grad():
+                    for local_param, global_param in zip(
+                        model.parameters(), global_params
+                    ):
+                        if local_param.requires_grad and local_param.grad is not None:
+                            local_param.grad += mu * (local_param.data - global_param)
+
+            if not use_dp:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=grad_clip)
             optimizer.step()
 
             with torch.no_grad():
@@ -210,6 +296,21 @@ def train_local(
         epsilon_spent, delta = get_privacy_spent(privacy_engine)
         result["epsilon_spent"] = epsilon_spent
         result["delta"]         = delta
+
+    # ── Cleanup: free GPU memory after DP training ────────────────────────────
+    # Opacus per-sample gradient hooks hold large intermediate tensors.
+    # Explicitly delete them and clear CUDA cache to prevent OOM when the
+    # next client trains on the same GPU.
+    # CRITICAL: call remove_hooks() on the GradSampleModule BEFORE deleting the
+    # privacy engine. Without this, the hooks remain registered on the underlying
+    # model's parameters, and the next call to make_private() raises:
+    #   ValueError: Trying to add hooks twice to the same model
+    if use_dp:
+        if hasattr(model, 'remove_hooks'):   # model is GradSampleModule here
+            model.remove_hooks()
+        del optimizer, privacy_engine
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     return result
 
@@ -321,6 +422,9 @@ class FedMedSegClient(fl.client.NumPyClient):
         self.max_grad_norm  = max_grad_norm
         self.criterion      = DiceBCELoss(smooth=1e-6)
 
+        if self.use_dp:
+            self.model = prepare_model_for_dp(self.model)
+
     def get_parameters(self, config: Dict = None) -> List[np.ndarray]:
         """Send local model parameters to the server."""
         return get_parameters(self.model)
@@ -370,6 +474,8 @@ class FedMedSegClient(fl.client.NumPyClient):
                 target_epsilon=self.target_epsilon,
                 target_delta=self.target_delta,
                 max_grad_norm=self.max_grad_norm,
+                server_round=str(config.get("server_round", "?")),
+                client_name=self.client_name,
             )
         finally:
             if self.lock:

@@ -42,22 +42,31 @@ OPTIONAL FLAGS:
 """
 
 # ── Standard Library ──────────────────────────────────────────────────────────
+import sys
+print("[Debug] Starting Python script, loading imports...", flush=True)
+
 import argparse
 import csv
 import json
+print("[Debug] Importing multiprocessing...", flush=True)
+import multiprocessing as mp
 import sys
 import time
 from datetime import datetime
 from pathlib import Path
 
-# ── Third-Party ───────────────────────────────────────────────────────────────
+print("[Debug] Importing matplotlib...", flush=True)
 import matplotlib
 matplotlib.use("Agg")
+print("[Debug] Importing numpy...", flush=True)
 import numpy as np
+print("[Debug] Importing torch...", flush=True)
 import torch
+print("[Debug] Importing torchvision...", flush=True)
 import torchvision.transforms as T
 from torch.utils.data import DataLoader
 
+print("[Debug] Importing flwr...", flush=True)
 import flwr as fl
 
 # ── Project Imports ───────────────────────────────────────────────────────────
@@ -104,7 +113,7 @@ CONFIG = {
     "local_epochs":    1,
     "mu":              0.01,   # FedProx proximal coefficient
     "lr":              1e-4,
-    "batch_size":      16,
+    "batch_size":      4,      # Small batch for DP (per-sample grads use ~B× more VRAM)
     "num_workers":     0,
     "threshold":       0.5,
     "random_seed":     42,
@@ -149,66 +158,79 @@ def get_device(preference: str = "auto") -> torch.device:
 #  CLIENT FACTORY
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def create_client_fn(
-    client_configs: dict,
-    device: torch.device,
-    local_epochs: int,
-    lr: float,
-    mu: float,
-    target_epsilon: float,
-    target_delta: float,
-    max_grad_norm: float,
-):
-    """
-    Factory function for DP-FedProx clients.
+def run_client(cid: str, client_configs: dict, device_str: str, local_epochs: int, lr: float, mu: float, target_epsilon: float, target_delta: float, max_grad_norm: float, lock):
+    # Re-add src to path since child processes start fresh
+    import sys, os
+    from pathlib import Path
+    _root = Path(__file__).resolve().parent
+    sys.path.insert(0, str(_root / "src"))
 
-    Each client will:
-    1. Receive global weights from the server
-    2. Wrap its optimizer with Opacus PrivacyEngine (DP-SGD)
-    3. Train locally with gradient clipping + Gaussian noise
-    4. Return updated weights + epsilon spent
-    """
-    def client_fn(cid: str) -> fl.client.NumPyClient:
-        cfg = client_configs[cid]
+    import torch
+    import torchvision.transforms as T
+    from torch.utils.data import DataLoader
+    import flwr as fl
+    from segmentation.model_unet import MobileNetV2UNet
+    from segmentation.dataset_rsna import RSNAPneumoniaDataset
+    from segmentation.fl_client import FedMedSegClient
 
-        train_ds = RSNAPneumoniaDataset(
-            rsna_root=cfg["rsna_root"],
-            subset_csv=cfg["train_csv"],
-            img_transform=get_train_transform(),
-            augment=True,
-        )
-        val_ds = RSNAPneumoniaDataset(
-            rsna_root=cfg["rsna_root"],
-            subset_csv=cfg["val_csv"],
-            img_transform=get_val_transform(),
-            augment=False,
-        )
-        train_loader = DataLoader(
-            train_ds, batch_size=cfg["batch_size"], shuffle=True, num_workers=0,
-        )
-        val_loader = DataLoader(
-            val_ds, batch_size=cfg["batch_size"], shuffle=False, num_workers=0,
-        )
+    device = torch.device(device_str)
+    cfg = client_configs[cid]
 
-        model = MobileNetV2UNet(pretrained=False, freeze_encoder=False).to(device)
+    # Redefine transforms
+    IMAGENET_MEAN = [0.485, 0.456, 0.406]
+    IMAGENET_STD  = [0.229, 0.224, 0.225]
+    train_transform = T.Compose([
+        T.Resize((224, 224)),
+        T.ColorJitter(brightness=0.2, contrast=0.2),
+        T.ToTensor(),
+        T.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
+    ])
+    val_transform = T.Compose([
+        T.Resize((224, 224)),
+        T.ToTensor(),
+        T.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
+    ])
 
-        return FedMedSegClient(
-            model=model,
-            train_loader=train_loader,
-            val_loader=val_loader,
-            device=device,
-            client_name=cfg["name"],
-            local_epochs=local_epochs,
-            lr=lr,
-            mu=mu,
-            # ── Phase 4: Enable Differential Privacy ──────────────────────
-            use_dp=True,
-            target_epsilon=target_epsilon,
-            target_delta=target_delta,
-            max_grad_norm=max_grad_norm,
-        )
+    train_ds = RSNAPneumoniaDataset(
+        rsna_root=cfg["rsna_root"],
+        subset_csv=cfg["train_csv"],
+        img_transform=train_transform,
+        augment=True,
+    )
+    val_ds = RSNAPneumoniaDataset(
+        rsna_root=cfg["rsna_root"],
+        subset_csv=cfg["val_csv"],
+        img_transform=val_transform,
+        augment=False,
+    )
+    train_loader = DataLoader(
+        train_ds, batch_size=cfg["batch_size"], shuffle=True, num_workers=0,
+    )
+    val_loader = DataLoader(
+        val_ds, batch_size=cfg["batch_size"], shuffle=False, num_workers=0,
+    )
 
-    return client_fn
+    model = MobileNetV2UNet(pretrained=False, freeze_encoder=False).to(device)
+
+    client = FedMedSegClient(
+        model=model,
+        train_loader=train_loader,
+        val_loader=val_loader,
+        device=device,
+        client_name=cfg["name"],
+        local_epochs=local_epochs,
+        lr=lr,
+        mu=mu,
+        lock=lock,
+        use_dp=True,
+        target_epsilon=target_epsilon,
+        target_delta=target_delta,
+        max_grad_norm=max_grad_norm,
+    )
+
+    print(f"  [Client {cid}] {cfg['name']} connecting to server...")
+    fl.client.start_numpy_client(server_address="127.0.0.1:8080", client=client)
+    print(f"  [Client {cid}] {cfg['name']} finished.")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -292,6 +314,16 @@ def main():
         else:
             print(f"  ⚠ Warm start requested but {ckpt_path} not found.")
 
+    # ── CRITICAL: Full Opacus compatibility prep on global model ─────────────
+    # 1. BatchNorm2d → GroupNorm  (Opacus can't do per-sample grads with BN)
+    # 2. Disable inplace activations  (MobileNetV2's ReLU6 uses inplace=True,
+    #    which conflicts with Opacus autograd hooks → RuntimeError)
+    # Both the SERVER model and every CLIENT model must share this architecture.
+    from segmentation.fl_client import prepare_model_for_dp
+    print("  [DP] Preparing global model for Opacus (GroupNorm + no-inplace)...")
+    init_model = prepare_model_for_dp(init_model)
+    print("  [DP] Global model ready [OK]")
+
     # ── Quantization Report (before training, measure original size) ─────────
     print("\n[Quantization] Measuring model size...")
     original_size_mb = get_model_size_mb(init_model)
@@ -334,28 +366,54 @@ def main():
         max_grad_norm=max_grad_norm,
         noise_multiplier=0.0,  # Will be computed internally by Opacus
     )
-    print(f"\n[FL] Starting DP-FedProx simulation ({num_rounds} rounds, "
+    # ── Launch Client Processes ───────────────────────────────────────────────
+    print(f"\n[FL] Spawning 2 DP client processes...")
+    processes = []
+    
+    # Shared lock prevents GPU memory deadlocks
+    gpu_lock = mp.Lock()
+    
+    for cid in ["0", "1"]:
+        p = mp.Process(
+            target=run_client,
+            args=(
+                cid, client_configs, str(device), local_epochs, 
+                CONFIG["lr"], mu, target_epsilon, CONFIG["target_delta"], 
+                max_grad_norm, gpu_lock
+            ),
+            daemon=True,
+        )
+        p.start()
+        processes.append(p)
+
+    # Give clients time to load datasets
+    print("[FL] Waiting for clients to initialize (5 seconds)...")
+    time.sleep(5)
+
+    # ── Start Flower Server ──────────────────────────────────────────────────
+    print(f"\n[FL] Starting DP-FedProx server ({num_rounds} rounds, "
           f"ε={target_epsilon})...\n")
 
     start_time = time.time()
 
-    history = fl.simulation.start_simulation(
-        client_fn=create_client_fn(
-            client_configs, device, local_epochs, CONFIG["lr"], mu,
-            target_epsilon, CONFIG["target_delta"], max_grad_norm,
-        ),
-        num_clients=2,
-        config=fl.server.ServerConfig(num_rounds=num_rounds),
-        strategy=strategy,
-        client_resources={"num_cpus": 4, "num_gpus": 0.0},
-        ray_init_args={
-            "runtime_env": {
-                "env_vars": {
-                    "PYTHONPATH": str(PROJECT_ROOT / "src"),
-                }
-            }
-        },
-    )
+    try:
+        history = fl.server.start_server(
+            server_address="0.0.0.0:8080",
+            config=fl.server.ServerConfig(num_rounds=num_rounds),
+            strategy=strategy,
+        )
+    except KeyboardInterrupt:
+        print("\n[FL] Server interrupted by user.")
+        history = None
+    finally:
+        print("\n[FL] Cleaning up client processes...")
+        for p in processes:
+            p.terminate()
+            p.join(timeout=10)
+            
+    if history is None:
+        print("Training was interrupted. No results to save.")
+        return
 
     total_time = time.time() - start_time
 
@@ -483,4 +541,5 @@ def main():
 
 
 if __name__ == "__main__":
+    mp.freeze_support()
     main()

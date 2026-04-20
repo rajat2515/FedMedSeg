@@ -55,8 +55,8 @@ def dice_coefficient(
     preds_bin = (preds > threshold).float()
 
     # Flatten
-    preds_flat   = preds_bin.view(preds_bin.size(0), -1)
-    targets_flat = targets.view(targets.size(0), -1).float()
+    preds_flat   = preds_bin.flatten(start_dim=1)
+    targets_flat = targets.flatten(start_dim=1).float()
 
     intersection = (preds_flat * targets_flat).sum(dim=1)
     union        = preds_flat.sum(dim=1) + targets_flat.sum(dim=1)
@@ -91,8 +91,8 @@ def mean_iou(
 
     preds_bin = (preds > threshold).float()
 
-    preds_flat   = preds_bin.view(preds_bin.size(0), -1)
-    targets_flat = targets.view(targets.size(0), -1).float()
+    preds_flat   = preds_bin.flatten(start_dim=1)
+    targets_flat = targets.flatten(start_dim=1).float()
 
     intersection = (preds_flat * targets_flat).sum(dim=1)                   # |P ∩ G|
     union        = preds_flat.sum(dim=1) + targets_flat.sum(dim=1) - intersection  # |P ∪ G|

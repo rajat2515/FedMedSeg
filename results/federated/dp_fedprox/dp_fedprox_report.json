@@ -1,0 +1,216 @@
+{
+  "experiment": "DP-FedProx \u2014 Differentially Private Federated Learning",
+  "algorithm": "FedProx (Li et al., 2020) + DP-SGD (Abadi et al., 2016)",
+  "purpose": "Phase 4: Privacy-preserving FL with mathematical DP guarantee",
+  "fedprox_mu": 0.01,
+  "num_rounds": 20,
+  "num_clients": 2,
+  "local_epochs": 1,
+  "warm_start": false,
+  "total_time_sec": 7127.47,
+  "completed_at": "2026-04-20T17:39:41.106533",
+  "privacy": {
+    "target_epsilon": 8.0,
+    "target_delta": 1e-05,
+    "max_grad_norm": 1.0,
+    "guarantee": "Patient data is (8.0, 1e-05)-differentially private"
+  },
+  "quantization": {
+    "original_size_mb": 17.51,
+    "quantized_size_mb": 17.51,
+    "reduction_pct": 0.0,
+    "compression_ratio": 1.0
+  },
+  "final_metrics": {
+    "val_dice": 0.5000000000233034,
+    "val_iou": 0.5000000000233034,
+    "val_pixel_acc": 0.9394302685260773
+  },
+  "comparison_with_fedprox": {
+    "fedprox_dice": 0.6448911627133688,
+    "dp_fedprox_dice": 0.5000000000233034,
+    "accuracy_cost": 0.1449,
+    "interpretation": "DP adds \u03b5=8.0 privacy guarantee with 0.1449 Dice drop"
+  },
+  "round_history": [
+    {
+      "round": 1,
+      "global_val_dice": 0.03891714805029264,
+      "global_val_iou": 0.020364407224021164,
+      "global_val_pixel_acc": 0.88470041680336,
+      "train_dice": 0.050541344261588905,
+      "train_iou": 0.026935698214779057
+    },
+    {
+      "round": 2,
+      "global_val_dice": 0.019810363168725448,
+      "global_val_iou": 0.010127421255120712,
+      "global_val_pixel_acc": 0.9198665692806244,
+      "train_dice": 0.02775102517636103,
+      "train_iou": 0.014343892263206247
+    },
+    {
+      "round": 3,
+      "global_val_dice": 0.007500065497691777,
+      "global_val_iou": 0.0037835300778840076,
+      "global_val_pixel_acc": 0.9332824463844299,
+      "train_dice": 0.012364881985256286,
+      "train_iou": 0.00627781208754757
+    },
+    {
+      "round": 4,
+      "global_val_dice": 0.0021502558175641013,
+      "global_val_iou": 0.001078483652695212,
+      "global_val_pixel_acc": 0.9377588884830474,
+      "train_dice": 0.003868525102790991,
+      "train_iou": 0.00194509361939894
+    },
+    {
+      "round": 5,
+      "global_val_dice": 0.00047189368324898596,
+      "global_val_iou": 0.0002362200309565239,
+      "global_val_pixel_acc": 0.9390287973880768,
+      "train_dice": 0.0008908179054090386,
+      "train_iou": 0.0004462163624323683
+    },
+    {
+      "round": 6,
+      "global_val_dice": 0.006086181825039203,
+      "global_val_iou": 0.006043179194156947,
+      "global_val_pixel_acc": 0.9393457851409912,
+      "train_dice": 0.0014394915004423729,
+      "train_iou": 0.0013448586323339532
+    },
+    {
+      "round": 7,
+      "global_val_dice": 0.2190179506379709,
+      "global_val_iou": 0.21900909576636968,
+      "global_val_pixel_acc": 0.9394160549640655,
+      "train_dice": 0.09153124886019665,
+      "train_iou": 0.09151574026399244
+    },
+    {
+      "round": 8,
+      "global_val_dice": 0.44200187561111026,
+      "global_val_iou": 0.4420009650821093,
+      "global_val_pixel_acc": 0.9394280953407288,
+      "train_dice": 0.31275320022961206,
+      "train_iou": 0.3127516776867278
+    },
+    {
+      "round": 9,
+      "global_val_dice": 0.49100034596866143,
+      "global_val_iou": 0.49100017740672597,
+      "global_val_pixel_acc": 0.9394299092292786,
+      "train_dice": 0.4592501880221116,
+      "train_iou": 0.459250112952599
+    },
+    {
+      "round": 10,
+      "global_val_dice": 0.5000000000233031,
+      "global_val_iou": 0.5000000000233031,
+      "global_val_pixel_acc": 0.939430208683014,
+      "train_dice": 0.49225000737435787,
+      "train_iou": 0.49225000737435787
+    },
+    {
+      "round": 11,
+      "global_val_dice": 0.5000000000233034,
+      "global_val_iou": 0.5000000000233034,
+      "global_val_pixel_acc": 0.9394302685260773,
+      "train_dice": 0.4992500007720732,
+      "train_iou": 0.4992500007720732
+    },
+    {
+      "round": 12,
+      "global_val_dice": 0.5000000000233034,
+      "global_val_iou": 0.5000000000233034,
+      "global_val_pixel_acc": 0.9394302685260773,
+      "train_dice": 0.5000000000555836,
+      "train_iou": 0.5000000000555836
+    },
+    {
+      "round": 13,
+      "global_val_dice": 0.5000000000233034,
+      "global_val_iou": 0.5000000000233034,
+      "global_val_pixel_acc": 0.9394302685260773,
+      "train_dice": 0.5000000000510926,
+      "train_iou": 0.5000000000510926
+    },
+    {
+      "round": 14,
+      "global_val_dice": 0.5000000000233034,
+      "global_val_iou": 0.5000000000233034,
+      "global_val_pixel_acc": 0.9394302685260773,
+      "train_dice": 0.5000000000555945,
+      "train_iou": 0.5000000000555945
+    },
+    {
+      "round": 15,
+      "global_val_dice": 0.5000000000233034,
+      "global_val_iou": 0.5000000000233034,
+      "global_val_pixel_acc": 0.9394302685260773,
+      "train_dice": 0.5000000000607167,
+      "train_iou": 0.5000000000607167
+    },
+    {
+      "round": 16,
+      "global_val_dice": 0.5000000000233034,
+      "global_val_iou": 0.5000000000233034,
+      "global_val_pixel_acc": 0.9394302685260773,
+      "train_dice": 0.5000000000577125,
+      "train_iou": 0.5000000000577125
+    },
+    {
+      "round": 17,
+      "global_val_dice": 0.5000000000233034,
+      "global_val_iou": 0.5000000000233034,
+      "global_val_pixel_acc": 0.9394302685260773,
+      "train_dice": 0.500000000053064,
+      "train_iou": 0.500000000053064
+    },
+    {
+      "round": 18,
+      "global_val_dice": 0.5000000000233034,
+      "global_val_iou": 0.5000000000233034,
+      "global_val_pixel_acc": 0.9394302685260773,
+      "train_dice": 0.500000000058251,
+      "train_iou": 0.500000000058251
+    },
+    {
+      "round": 19,
+      "global_val_dice": 0.5000000000233034,
+      "global_val_iou": 0.5000000000233034,
+      "global_val_pixel_acc": 0.9394302685260773,
+      "train_dice": 0.5000000000542233,
+      "train_iou": 0.5000000000542233
+    },
+    {
+      "round": 20,
+      "global_val_dice": 0.5000000000233034,
+      "global_val_iou": 0.5000000000233034,
+      "global_val_pixel_acc": 0.9394302685260773,
+      "train_dice": 0.5000000000495632,
+      "train_iou": 0.5000000000495632
+    }
+  ],
+  "config": {
+    "rsna_root": "C:\\Users\\shubh\\Federate learning\\FedMedSeg\\data\\rsna_pneumonia",
+    "client_a_csv": "C:\\Users\\shubh\\Federate learning\\FedMedSeg\\data\\rsna_pneumonia\\subset\\client_a_train.csv",
+    "client_b_csv": "C:\\Users\\shubh\\Federate learning\\FedMedSeg\\data\\rsna_pneumonia\\subset\\client_b_train.csv",
+    "val_csv": "C:\\Users\\shubh\\Federate learning\\FedMedSeg\\data\\rsna_pneumonia\\subset\\val_subset.csv",
+    "results_dir": "C:\\Users\\shubh\\Federate learning\\FedMedSeg\\results\\federated\\dp_fedprox",
+    "warm_start_ckpt": "C:\\Users\\shubh\\Federate learning\\FedMedSeg\\results\\model3c_final\\model3c_best.pth",
+    "num_rounds": 20,
+    "local_epochs": 1,
+    "mu": 0.01,
+    "lr": 0.0001,
+    "batch_size": 4,
+    "num_workers": 0,
+    "threshold": 0.5,
+    "random_seed": 42,
+    "target_epsilon": 8.0,
+    "target_delta": 1e-05,
+    "max_grad_norm": 1.0
+  }
+}

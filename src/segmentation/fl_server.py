@@ -127,6 +127,7 @@ def create_fedavg_strategy(
         evaluate_metrics_aggregation_fn=weighted_average,
         fit_metrics_aggregation_fn=fit_metrics_aggregation,
         initial_parameters=initial_parameters,
+        on_fit_config_fn=lambda server_round: {"server_round": server_round},
     )
 
 
@@ -169,4 +170,5 @@ def create_fedprox_strategy(
         evaluate_metrics_aggregation_fn=weighted_average,
         fit_metrics_aggregation_fn=fit_metrics_aggregation,
         initial_parameters=initial_parameters,
+        on_fit_config_fn=lambda server_round: {"server_round": server_round},
     )
