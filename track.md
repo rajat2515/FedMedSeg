@@ -546,5 +546,67 @@ We use a background scheduler (`APScheduler`) to automate retraining without hum
 
 ---
 
+## 19. Inference Web Portal — Streamlit UI [Phase 5]
+
+### Purpose
+A doctor, examiner, or stakeholder can upload any chest X-ray and receive an immediate AI-driven segmentation result. This bridges the gap between the complex backend math and a human-readable, actionable visualization. Without this, the entire system is a "black box" of terminal output.
+
+### Technology: Streamlit
+We use **Streamlit** — a Python library that turns a `.py` script into a fully interactive web page in ~50 lines of code. It handles file upload widgets, image rendering, and layout components automatically. No HTML/JavaScript required.
+
+### Application Structure (`app.py`)
+
+The UI has **three tabs**:
+
+#### Tab 1: Run Inference
+This is the core functionality.
+1. **Upload:** User uploads a `.jpg` / `.png` chest X-ray.
+2. **Model loads** from the saved `.pth` checkpoint (`model3c_best.pth`).
+3. **Inference Pipeline:**
+   - Image is resized to 224×224 and normalized with ImageNet statistics.
+   - Passed through the `MobileNetV2UNet` → output is a 224×224 probability map.
+   - A Sigmoid activation converts logits to `[0,1]` probabilities.
+   - Pixels **above the threshold (default 0.5)** are classified as Pneumonia.
+4. **Three visualizations are shown:**
+   - **Overlay:** Original X-ray with a red mask drawn over the Pneumonia region.
+   - **Heatmap:** Full probability map colored on a blue→red scale (more red = higher probability).
+   - **Statistics:** Max probability, mean probability, infected pixel count, and % lung coverage.
+
+#### Tab 2: Experiment Results
+Displays the live results from `federation_summary.json` and `dp_fedprox_report.json` as an interactive table. Also renders the saved `federation_comparison.png` and `convergence_curves.png` charts directly in the browser.
+
+#### Tab 3: About
+A text summary of all four phases with embedded LaTeX formulas rendered by Streamlit's built-in MathJax support.
+
+### Inference Formula Recap
+```
+Input X-ray (224×224, RGB)
+       ↓
+  MobileNetV2-UNet
+       ↓
+  Logits (224×224, 1 channel)
+       ↓
+  Sigmoid → Probability Map [0,1]
+       ↓
+  Threshold at 0.5:  pixel ≥ 0.5 → Pneumonia (1)
+                     pixel < 0.5 → Normal (0)
+       ↓
+  Binary Mask + Overlay + Heatmap
+```
+
+### File
+| File | Role |
+|------|------|
+| `app.py` | Main Streamlit application (project root) |
+
+### How to Run
+```bash
+cd /home/rajat/Documents/Project/FedMedSeg
+.venv/bin/streamlit run app.py
+# Opens at: http://localhost:8501
+```
+
+---
+
 *Last Updated: 2026-04-20*
-*Phase: 4 — Privacy & Efficiency Integration*
+*Phase: 5 — Inference UI Complete*
