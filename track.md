@@ -528,7 +528,7 @@ We compress the model weights from 32-bit floats down to **8-bit integers (`int8
 
 ---
 
-## 18. Continuous Learning Pipeline (MLOps) [Phase 5 - Architecture]
+## 18. Continuous Learning Pipeline (MLOps) [Phase 5]
 
 ### The Static vs. Dynamic Problem
 Currently, the FL system is static — we run it once, and it stops. In reality, hospitals continuously acquire new X-rays. 
@@ -609,4 +609,4 @@ cd /home/rajat/Documents/Project/FedMedSeg
 ---
 
 *Last Updated: 2026-04-20*
-*Phase: 5 — Inference UI Complete*
+*Phase: 5 — Inference UI & Continuous Learning Pipeline Complete*

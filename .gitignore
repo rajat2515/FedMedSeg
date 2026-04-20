@@ -44,3 +44,14 @@ ray_sessions/
 .env
 .env.*
 !.env.example
+
+# ── LaTeX ─────────────────────────────────────────────────────────────────────
+*.tex
+*.aux
+*.log
+*.toc
+*.pdf
+*.out
+*.fls
+*.fdb_latexmk
+*.synctex.gz
