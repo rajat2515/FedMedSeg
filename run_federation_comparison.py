@@ -43,7 +43,7 @@ FEDAVG_ROUNDS_CSV   = PROJECT_ROOT / "results" / "federated" / "fedavg" / "round
 FEDPROX_ROUNDS_CSV  = PROJECT_ROOT / "results" / "federated" / "fedprox" / "round_metrics.csv"
 DP_ROUNDS_CSV       = PROJECT_ROOT / "results" / "federated" / "dp_fedprox" / "round_metrics.csv"
 
-OUTPUT_DIR = PROJECT_ROOT / "results" / "federated"
+OUTPUT_DIR = PROJECT_ROOT / "results" / "federated" / "dp_federated_comparison"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
