@@ -608,5 +608,133 @@ cd /home/rajat/Documents/Project/FedMedSeg
 
 ---
 
-*Last Updated: 2026-04-20*
-*Phase: 5 — Inference UI & Continuous Learning Pipeline Complete*
+## 20. Real-World Distributed Deployment — Multi-Laptop Testing [Phase 6]
+
+### Motivation
+All previous experiments (Phases 3–5) used Python `multiprocessing` or Ray simulation to run the server and both hospital clients on **one single machine**. This is a simulation shortcut — it does NOT test real network communication, OS compatibility, or bandwidth constraints.
+
+With three physical laptops available, we can run a **true distributed federated learning experiment** where every participant is a separate machine communicating over a real local network.
+
+### Hardware Setup
+
+| Role | Machine | OS | Script |
+|------|---------|-----|--------|
+| **Central Model Initiator (Server)** | Laptop 1 | Linux | `start_server.py` |
+| **Hospital Node A (Client A)** | Laptop 2 | Windows | `start_client.py` |
+| **Hospital Node B (Client B)** | Laptop 3 | Windows | `start_client.py` |
+
+All three laptops must be on the **same local network** (Wi-Fi or LAN).
+
+---
+
+### Why the New Scripts? (Windows Compatibility)
+
+The old experiment scripts (`run_fedprox.py`, `run_fedavg.py`) used Python `multiprocessing` to spawn child processes on **one machine**. This has two problems:
+1. `multiprocessing` with `spawn` context (required on Windows) has different semantics than Linux `fork`.
+2. Ray simulation is entirely incompatible with Windows.
+
+The two new entry-point scripts are **single-process network clients/servers** — they use only **Flower's gRPC transport layer** (standard TCP sockets), which is fully cross-platform.
+
+| Script | Uses multiprocessing? | Uses Ray? | Windows-safe? |
+|---|---|---|---|
+| `run_fedprox.py` (old) | ✅ Yes | ❌ No | ❌ **Not safe** |
+| `run_fedavg.py` (old) | ✅ Yes | ❌ No | ❌ **Not safe** |
+| `start_server.py` (new) | ❌ No | ❌ No | ✅ **Safe** |
+| `start_client.py` (new) | ❌ No | ❌ No | ✅ **Safe** |
+
+---
+
+### Per-Round Communication Flow (Real Network)
+
+```
+ROUND N
+=========
+
+[Linux Server]              [Windows Client A]       [Windows Client B]
+     │                            │                         │
+     │──── Send Global Weights ──►│                         │
+     │──── Send Global Weights ───────────────────────────►│
+     │                            │                         │
+     │                    Train on local data       Train on local data
+     │                    (client_a dataset)        (client_b dataset)
+     │                    + FedProx penalty         + FedProx penalty
+     │                            │                         │
+     │◄─── Return Updated Weights─│                         │
+     │◄─── Return Updated Weights─────────────────────────│
+     │                            │                         │
+     │   FedAvg Aggregation:                               │
+     │   w_global = Σ (n_k / n_total) × w_k               │
+     │                            │                         │
+     └────────── Repeat Round N+1 ───────────────────────►│
+```
+
+**Transport:** All communication is over **Flower gRPC** (HTTP/2 + Protocol Buffers). The model weights (~12.8 MB per round as float32, ~3.2 MB quantized) are serialized as NumPy arrays and transmitted as binary protobuf messages.
+
+---
+
+### Data Privacy Guarantee
+
+Even in the real deployment, **raw patient data (X-ray images) never leaves the hospital laptop**:
+
+```
+Linux Server          Windows Client A       Windows Client B
+─────────────         ─────────────────      ─────────────────
+Global model          Hospital A X-rays      Hospital B X-rays
+weights only    ←→    (STAYS LOCAL)    ←→    (STAYS LOCAL)
+                      Sends: model           Sends: model
+                      weight arrays only     weight arrays only
+```
+
+---
+
+### How to Run
+
+**Step 1 — Start the server on Laptop 1 (Linux):**
+```bash
+# Note your IP first: ip addr show
+python start_server.py --host 0.0.0.0 --port 8080 --strategy fedprox --clients 2 --rounds 20
+# Server will wait here until both clients connect
+```
+
+**Step 2 — Start Hospital Node A on Laptop 2 (Windows):**
+```bat
+python start_client.py --server <LINUX_IP>:8080 --node-type client_a --mu 0.01
+```
+
+**Step 3 — Start Hospital Node B on Laptop 3 (Windows):**
+```bat
+python start_client.py --server <LINUX_IP>:8080 --node-type client_b --mu 0.01
+```
+
+Once both clients connect, the server automatically initiates Round 1 and training proceeds.
+
+**Optional — Run with Differential Privacy:**
+```bat
+python start_client.py --server <LINUX_IP>:8080 --node-type client_a --mu 0.01 --use-dp --epsilon 8.0
+```
+
+---
+
+### File Map (Phase 6)
+
+| File | What It Contains | Key Functions |
+|------|-----------------|---------------|
+| `start_server.py` | Standalone Flower server entry point | `main()` — configures strategy and starts `fl.server.start_server()` |
+| `start_client.py` | Standalone Flower client entry point | `main()` — loads dataset, builds `FedMedSegClient`, calls `fl.client.start_numpy_client()` |
+
+---
+
+## 21. Glossary (Phase 6 Additions)
+
+| Term | Meaning |
+|------|---------|
+| **gRPC** | Google Remote Procedure Call — the binary network protocol Flower uses to send model weights between server and clients |
+| **Non-IID (Real)** | Data heterogeneity that exists *naturally* because different hospitals see different patient populations — no artificial splitting needed in real deployment |
+| **Central Model Initiator** | The server laptop that holds the global model, broadcasts weights, and performs FedAvg aggregation |
+| **Hospital Node** | A client laptop that holds local patient data, trains locally, and sends weight updates to the server |
+| **num_workers=0** | DataLoader setting that disables multiprocessing for data loading — required on Windows to avoid subprocess spawn errors |
+
+---
+
+*Last Updated: 2026-04-29*
+*Phase: 6 — Real Multi-Laptop Distributed Deployment*
