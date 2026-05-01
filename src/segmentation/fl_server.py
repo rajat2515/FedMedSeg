@@ -172,3 +172,70 @@ def create_fedprox_strategy(
         initial_parameters=initial_parameters,
         on_fit_config_fn=lambda server_round: {"server_round": server_round},
     )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  CHECKPOINT HELPERS — Save / Load Global Model for Continuous Pipeline
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def save_global_model(
+    parameters: fl.common.Parameters,
+    model_shell,
+    save_path,
+) -> None:
+    """
+    Persist the aggregated global model weights to a .pth file.
+
+    Used by the continuous pipeline to checkpoint after every session so
+    the next session can warm-start from the best known weights.
+
+    Args:
+        parameters:  Flower Parameters object (result of aggregation).
+        model_shell: An uninitialized MobileNetV2UNet whose state_dict keys
+                     are used to reconstruct the OrderedDict for torch.save.
+        save_path:   Destination .pth file path (Path or str).
+    """
+    import torch
+    from collections import OrderedDict
+    from pathlib import Path
+
+    ndarrays = fl.common.parameters_to_ndarrays(parameters)
+    keys     = list(model_shell.state_dict().keys())
+
+    if len(keys) != len(ndarrays):
+        raise ValueError(
+            f"save_global_model: key count mismatch "
+            f"({len(keys)} keys vs {len(ndarrays)} arrays)."
+        )
+
+    state_dict = OrderedDict(
+        {k: torch.tensor(v, dtype=torch.float32) for k, v in zip(keys, ndarrays)}
+    )
+    Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+    torch.save(state_dict, save_path)
+
+
+def load_global_model_parameters(
+    checkpoint_path,
+    model_shell,
+) -> fl.common.Parameters:
+    """
+    Load a .pth checkpoint and return Flower Parameters.
+
+    Used by the continuous pipeline to warm-start each new session from
+    the best checkpoint of the previous session.
+
+    Args:
+        checkpoint_path: Path to a .pth file saved by save_global_model().
+        model_shell:     An uninitialized MobileNetV2UNet used to read the
+                         state_dict and convert to ndarrays.
+
+    Returns:
+        fl.common.Parameters ready to pass as initial_parameters to a strategy.
+    """
+    import torch
+
+    state_dict = torch.load(checkpoint_path, map_location="cpu")
+    model_shell.load_state_dict(state_dict, strict=True)
+    ndarrays = [v.cpu().numpy() for v in state_dict.values()]
+    return fl.common.ndarrays_to_parameters(ndarrays)

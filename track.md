@@ -738,3 +738,191 @@ python start_client.py --server <LINUX_IP>:8080 --node-type client_a --mu 0.01 -
 
 *Last Updated: 2026-04-29*
 *Phase: 6 — Real Multi-Laptop Distributed Deployment*
+
+---
+
+## 22. Continuous Federated Learning Pipeline [Phase 7]
+
+### The Problem: Static Training vs. Real-World Hospitals
+
+The Phase 6 deployment runs a **fixed session** — `N` rounds, then every process exits. In a real hospital network, new X-rays are collected every day. Restarting and manually reconnecting all nodes after every session is not practical at production scale. The **Continuous Pipeline** turns FedMedSeg into a long-running, self-managing training system.
+
+---
+
+### Architecture: Session Loop
+
+Instead of a single training run, the system is organised into **sessions**. A session is one complete batch of `--rounds` federated rounds. After each session the server:
+1. Saves a **checkpoint** of the aggregated global model.
+2. Logs performance metrics to `pipeline_log.json`.
+3. Waits for a configurable **cool-down interval**.
+4. Starts the **next session** using the best checkpoint so far as the **warm start**.
+
+```
+  Session 1  (R rounds)  →  save checkpoint  →  cool-down
+       ↓
+  Session 2  (R rounds)  →  save checkpoint  →  cool-down
+       ↓
+  Session 3  ...             (until Ctrl+C or --sessions N)
+```
+
+This means **learning is cumulative** — each session builds on what was learned in all previous sessions, rather than starting from scratch.
+
+---
+
+### Warm-Start (Incremental Learning)
+
+At the beginning of every session the server loads the **best global model** saved by any previous session and uses its weights as `initial_parameters` for the Flower strategy:
+
+$$
+w_{\text{init}}^{(s)} = w_{\text{best}}^{(s-1)}
+$$
+
+If no checkpoint exists yet (Session 1), the model is initialised with standard ImageNet pre-trained weights (same as before).
+
+This is equivalent to **Continual Learning** in the federated setting — the model never forgets what it learned in earlier sessions even as new data arrives.
+
+---
+
+### Checkpoint Strategy
+
+After each session two files are written/updated:
+
+| File | Updated When | Purpose |
+|------|-------------|---------|
+| `checkpoints/session_NNN_model.pth` | Every session | Full history — one file per session |
+| `checkpoints/best_global_model.pth` | Val Dice improves | Rolling best — used as warm-start next session |
+
+The **best model** criterion is the **global Val Dice** reported by the `weighted_average()` metric aggregation function. If a session's Val Dice does not beat the current best (e.g., due to noisy or anomalous data), `best_global_model.pth` is **not overwritten**, protecting the best known model.
+
+---
+
+### Pipeline Logging — `pipeline_log.json`
+
+A JSON array is maintained at the project root. One entry is appended after every session:
+
+```json
+[
+  {
+    "session": 1,
+    "timestamp": "2026-05-01 10:30:00",
+    "rounds": 20,
+    "total_time_sec": 3420.5,
+    "val_dice": 0.7123,
+    "val_iou": 0.5538,
+    "val_pixel_acc": 0.9201,
+    "is_best": true
+  },
+  ...
+]
+```
+
+This log can be used to plot convergence across sessions, detect data drift, or audit training history.
+
+---
+
+### Auto-Reconnecting Clients
+
+The original `start_client.py` exits once the server closes the gRPC connection at the end of the final round. In the continuous pipeline the server restarts for Session 2 while the clients are still alive (just idle during the cool-down).
+
+`continuous_client.py` wraps `fl.client.start_numpy_client()` in a **reconnect loop**:
+
+```
+while True:
+    try:
+        fl.client.start_numpy_client(server_address, client)
+        # Server closed connection cleanly → session done
+        wait(reconnect_delay)       # server is in cool-down
+        # next iteration → reconnect for Session N+1
+    except ConnectionRefusedError:
+        # Server not yet up → retry after reconnect_delay
+        wait(reconnect_delay)
+```
+
+Clients can be configured with `--reconnect-retries -1` (retry indefinitely) or a fixed budget.
+
+---
+
+### Data-Watch Mode (`--data-watch`)
+
+When `--data-watch` is passed to `continuous_client.py`, the client **rebuilds its `RSNAPneumoniaDataset` and `DataLoader`** at the start of every new session. This means:
+
+- If a hospital administrator appended new patient records to `client_a_train.csv` during the cool-down, they will be included in the next session's training **automatically** — no restart required.
+- The previous session's DataLoader is discarded and garbage-collected.
+
+This simulates the real-world scenario where hospitals continuously acquire new diagnostic images.
+
+---
+
+### Checkpoint Helpers Added to `fl_server.py`
+
+Two new functions were added to `src/segmentation/fl_server.py`:
+
+| Function | Purpose |
+|----------|---------|
+| `save_global_model(parameters, model_shell, save_path)` | Converts Flower `Parameters` → `state_dict` → saves `.pth` |
+| `load_global_model_parameters(checkpoint_path, model_shell)` | Loads `.pth` → returns Flower `Parameters` for `initial_parameters` |
+
+These are the bridge between Flower's NumPy-array serialization format and PyTorch's `torch.save` / `torch.load` format.
+
+---
+
+### How to Run the Continuous Pipeline
+
+**On the Linux server laptop:**
+```bash
+python continuous_server.py \
+    --host 0.0.0.0 \
+    --port 8080 \
+    --rounds 20 \
+    --clients 2 \
+    --strategy fedprox \
+    --mu 0.01 \
+    --sessions -1 \          # run indefinitely
+    --interval 3600 \        # 1-hour cool-down between sessions
+    --checkpoint-dir checkpoints/
+```
+
+**On each Windows hospital laptop:**
+```bat
+python continuous_client.py ^
+    --server <LINUX_IP>:8080 ^
+    --node-type client_a ^
+    --mu 0.01 ^
+    --reconnect-retries -1 ^
+    --reconnect-delay 30 ^
+    --data-watch
+```
+
+Press `Ctrl+C` on the server to stop the pipeline gracefully after the current session finishes.
+
+---
+
+### File Map (Phase 7)
+
+| File | What It Contains | Key Functions |
+|------|-----------------|---------------|
+| `continuous_server.py` | Session-loop server entry point | `main()` — session loop, warm-start, checkpointing, `pipeline_log.json` |
+| `continuous_client.py` | Auto-reconnecting hospital node | `main()` — reconnect loop, `build_data_loaders()`, data-watch |
+| `src/segmentation/fl_server.py` | *(modified)* Added checkpoint helpers | `save_global_model()`, `load_global_model_parameters()` |
+| `checkpoints/best_global_model.pth` | *(auto-generated)* Rolling best global model | — |
+| `checkpoints/session_NNN_model.pth` | *(auto-generated)* Per-session checkpoint | — |
+| `pipeline_log.json` | *(auto-generated)* JSON log of all sessions | — |
+
+---
+
+## 23. Glossary (Phase 7 Additions)
+
+| Term | Meaning |
+|------|---------|
+| **Session** | One complete batch of `R` federated rounds. Multiple sessions form the continuous pipeline |
+| **Warm Start** | Initialising a new session from the best checkpoint of all previous sessions rather than random weights |
+| **Cool-down Interval** | The wait time between sessions (`--interval`). Allows hospitals to upload new data before the next session |
+| **Data-Watch** | Client-side mode that rebuilds the DataLoader before each session to include newly arrived patient records |
+| **Pipeline Log** | `pipeline_log.json` — a persistent JSON array tracking per-session metrics across all sessions |
+| **Incremental Learning** | Learning cumulatively from new data without forgetting knowledge from previous data |
+| **Rolling Best** | `best_global_model.pth` — updated only when the current session beats the historical best Val Dice |
+
+---
+
+*Last Updated: 2026-05-01*
+*Phase: 7 — Continuous Federated Learning Pipeline*
