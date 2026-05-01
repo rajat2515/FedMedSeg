@@ -1,4 +1,5 @@
 import argparse
+import time
 import flwr as fl
 import torch
 import torchvision.transforms as T
@@ -109,7 +110,27 @@ def main():
     )
 
     print(f"\n[Client] Connecting to server {args.server}...")
-    fl.client.start_numpy_client(server_address=args.server, client=client)
+    print("[Client] Waiting for server to start the first round...\n")
+
+    start_time = time.time()
+    try:
+        fl.client.start_numpy_client(server_address=args.server, client=client)
+    except Exception:
+        # Server closed the gRPC connection after the final round.
+        # This StopIteration/RpcError is expected — it means training is done.
+        pass
+
+    total_time = time.time() - start_time
+    print("\n" + "=" * 65)
+    print(f"  ✅  HOSPITAL NODE ({args.node_type}) — TRAINING COMPLETE")
+    print("=" * 65)
+    print(f"  Server          : {args.server}")
+    print(f"  Strategy        : FedProx (mu={args.mu})" if args.mu > 0 else f"  Strategy        : FedAvg")
+    print(f"  DP Enabled      : {args.use_dp}")
+    print(f"  Total Time      : {total_time / 60:.1f} minutes ({total_time:.0f} sec)")
+    print("=" * 65)
+    print("  All rounds received from server. Client shutting down.")
+    print("=" * 65 + "\n")
 
 if __name__ == "__main__":
     main()

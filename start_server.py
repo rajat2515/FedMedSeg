@@ -1,4 +1,5 @@
 import argparse
+import time
 import flwr as fl
 import sys
 from pathlib import Path
@@ -52,11 +53,49 @@ def main():
         )
 
     print("\n[Server] Starting Flower Server...")
-    fl.server.start_server(
+    print("[Server] Waiting for clients to connect...\n")
+
+    start_time = time.time()
+    history = fl.server.start_server(
         server_address=f"{args.host}:{args.port}",
         config=fl.server.ServerConfig(num_rounds=args.rounds),
         strategy=strategy,
     )
+    total_time = time.time() - start_time
+
+    # ── Completion Summary ────────────────────────────────────────────────────
+    print("\n" + "=" * 65)
+    print("  ✅  FEDERATED TRAINING COMPLETE")
+    print("=" * 65)
+    print(f"  Strategy   : {args.strategy.upper()}  (mu={args.mu if args.strategy == 'fedprox' else 'N/A'})")
+    print(f"  Rounds     : {args.rounds}")
+    print(f"  Clients    : {args.clients}")
+    print(f"  Total Time : {total_time / 60:.1f} minutes ({total_time:.0f} sec)")
+
+    # Extract final round metrics from history
+    if history and history.metrics_distributed:
+        metrics = history.metrics_distributed
+        def last_val(key):
+            vals = metrics.get(key, [])
+            return vals[-1][1] if vals else None
+
+        dice = last_val("val_dice")
+        iou  = last_val("val_iou")
+        pix  = last_val("val_pixel_acc")
+
+        print("\n  📊  Final Global Model Metrics (Round {}):".format(args.rounds))
+        if dice is not None:
+            print(f"       Val Dice       : {dice:.4f}")
+        if iou is not None:
+            print(f"       Val IoU        : {iou:.4f}")
+        if pix is not None:
+            print(f"       Val Pixel Acc  : {pix:.4f}")
+    else:
+        print("\n  (No distributed metrics returned by clients.)")
+
+    print("=" * 65)
+    print("  All clients have disconnected. Server shutting down.")
+    print("=" * 65 + "\n")
 
 if __name__ == "__main__":
     main()
