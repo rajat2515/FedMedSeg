@@ -179,7 +179,9 @@ MODELS = {
         "color":       "#38bdf8",
     },
     "🔗 FedProx Model (Federated — Best FL)": {
-        "path":        None,  # FedProx uses the same architecture from the final round
+        # No final .pth saved — federated round weights were not exported to disk.
+        # Metrics are from results/federated/fedprox/fedprox_report.json
+        "path":        None,
         "dice":        0.6449,
         "iou":         0.5856,
         "pixel_acc":   0.9541,
@@ -188,6 +190,8 @@ MODELS = {
         "color":       "#4ade80",
     },
     "🔒 DP-FedProx Model (Federated + Privacy)": {
+        # No final .pth saved — federated round weights were not exported to disk.
+        # Metrics are from results/federated/dp_fedprox/dp_fedprox_report.json
         "path":        None,
         "dice":        0.5000,
         "iou":         0.5000,
