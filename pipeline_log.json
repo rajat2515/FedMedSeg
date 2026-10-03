@@ -1,0 +1,32 @@
+[
+  {
+    "session": 1,
+    "timestamp": "2026-05-02 06:42:06",
+    "rounds": 1,
+    "total_time_sec": 391.2,
+    "val_dice": 0.3270776333316924,
+    "val_iou": 0.3083136746925967,
+    "val_pixel_acc": 0.9433514475822449,
+    "is_best": false
+  },
+  {
+    "session": 1,
+    "timestamp": "2026-05-02 06:48:55",
+    "rounds": 1,
+    "total_time_sec": 130.2,
+    "val_dice": 0.3806559693009134,
+    "val_iou": 0.32052496087456506,
+    "val_pixel_acc": 0.9512552637902518,
+    "is_best": false
+  },
+  {
+    "session": 1,
+    "timestamp": "2026-05-02 09:07:12",
+    "rounds": 1,
+    "total_time_sec": 240.6,
+    "val_dice": 0.10669812784781531,
+    "val_iou": 0.0650772416431989,
+    "val_pixel_acc": 0.9392484795479548,
+    "is_best": false
+  }
+]
